@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-章节生成Agent
+Section Generation Agent.
+
+This module provides a basic section generation agent that creates individual
+sections of a report using knowledge retrieval and LLM generation.
 """
 
 from typing import Dict, Any, Optional
@@ -13,71 +16,108 @@ from app.logger import logger
 
 
 class SectionAgent(BaseAgent):
-    """单个章节生成Agent"""
+    """
+    Single section generation agent.
+    
+    This agent is responsible for generating individual sections of a report.
+    It retrieves relevant information from a knowledge base and uses an LLM
+    to generate high-quality, structured section content.
+    
+    Attributes:
+        section_info (Dict[str, Any]): Information about the section to generate.
+        report_context (Dict[str, Any]): Context information about the overall report.
+        knowledge_base_path (str): Path to the knowledge base for retrieval.
+        knowledge_tool (KnowledgeRetrievalTool): Tool for retrieving knowledge.
+        generated_content (str): The generated section content.
+        is_completed (bool): Flag indicating if section generation is complete.
+    """
     
     def __init__(self, 
                  section_info: Dict[str, Any],
                  report_context: Dict[str, Any],
                  knowledge_base_path: str = "workdir/documents",
                  **kwargs):
+        """
+        Initialize the SectionAgent.
+        
+        Args:
+            section_info (Dict[str, Any]): Information about the section including
+                title, level, id, etc.
+            report_context (Dict[str, Any]): Context about the overall report
+                including title and other metadata.
+            knowledge_base_path (str, optional): Path to the knowledge base directory.
+                Defaults to "workdir/documents".
+            **kwargs: Additional keyword arguments passed to the parent class.
+        """
         super().__init__(**kwargs)
         
         self.section_info = section_info
         self.report_context = report_context
         self.knowledge_base_path = knowledge_base_path
         
-        # 初始化工具
+        # Initialize tools
         self.knowledge_tool = KnowledgeRetrievalTool(knowledge_base_path)
         
-        # 生成的内容
+        # Generated content
         self.generated_content = ""
         self.is_completed = False
         
-        # 设置Agent默认参数
-        section_title = section_info.get("content", "未命名章节")
+        # Set agent default parameters
+        section_title = section_info.get("content", "Untitled Section")
         if not self.description:
-            self.description = f"生成章节'{section_title}'的专用Agent"
+            self.description = f"Dedicated agent for generating section '{section_title}'"
         
-        # 设置系统提示
-        self.system_prompt = f"""你是专门负责生成报告章节"{section_title}"的Agent。
+        # Set system prompt
+        self.system_prompt = f"""You are an agent specialized in generating the report section "{section_title}".
 
-报告背景信息：
-- 报告标题：{report_context.get('title', '')}
-- 当前章节：{section_title}（级别 {section_info.get('level', 1)}）
-- 章节ID：{section_info.get('id', 0)}
+Report Background Information:
+- Report Title: {report_context.get('title', '')}
+- Current Section: {section_title} (Level {section_info.get('level', 1)})
+- Section ID: {section_info.get('id', 0)}
 
-你的任务：
-1. 深入理解该章节在整个报告中的作用和定位
-2. 使用knowledge_retrieval工具获取相关信息
-3. 生成高质量、结构化的章节内容
-4. 确保内容与章节标题高度相关且符合报告整体风格
+Your Tasks:
+1. Thoroughly understand the role and positioning of this section within the overall report
+2. Use the knowledge_retrieval tool to obtain relevant information
+3. Generate high-quality, structured section content
+4. Ensure content is highly relevant to the section title and fits the overall report style
 
-内容要求：
-- 如果是高级别标题（1-2级），提供概括性、战略性内容
-- 如果是低级别标题（3级以上），提供具体详细的实施内容
-- 内容长度适中（200-800字）
-- 使用专业语言，确保准确性和可读性
-- 必要时包含数据、案例或具体建议
+Content Requirements:
+- If high-level heading (1-2 levels): provide comprehensive, strategic content
+- If low-level heading (3+ levels): provide specific, detailed implementation content
+- Moderate content length (200-800 words)
+- Use professional language, ensuring accuracy and readability
+- Include data, cases, or specific recommendations when necessary
 
-完成条件：
-- 生成完整的章节内容后使用terminate工具结束任务
+Completion Conditions:
+- Use the terminate tool to end the task after generating complete section content
 """
     
     async def step(self) -> str:
-        """执行单步操作"""
+        """
+        Execute a single step operation.
+        
+        This method performs one iteration of the section generation process,
+        including knowledge retrieval and content generation using the LLM.
+        
+        Returns:
+            str: Status message indicating the current step result.
+            
+        Raises:
+            Exception: If the step execution fails.
+        """
         try:
             if self.is_completed:
                 self.state = AgentState.FINISHED
-                return f"章节'{self.section_info.get('content', '')}'已完成生成"
+                return f"Section '{self.section_info.get('content', '')}' generation completed"
             
-            # 构建检索查询
+            # Build retrieval query
             section_title = self.section_info.get("content", "")
             report_title = self.report_context.get("title", "")
             query = f"{section_title} {report_title}"
             
-            logger.info(f"开始生成章节: {section_title}")
+            logger.info(f"Starting section generation: {section_title}")
             
-            # 从知识库检索相关信息
+            # Retrieve relevant information from knowledge base
             try:
                 retrieval_result = await self.knowledge_tool.execute(
                     query=query,
@@ -86,47 +126,47 @@ class SectionAgent(BaseAgent):
                 )
                 
                 if retrieval_result.error:
-                    logger.warning(f"知识库检索失败: {retrieval_result.error}")
-                    knowledge_context = "未获取到相关知识库信息，请基于常识和专业知识生成内容。"
+                    logger.warning(f"Knowledge base retrieval failed: {retrieval_result.error}")
+                    knowledge_context = "No relevant knowledge base information obtained, please generate content based on common sense and professional knowledge."
                 else:
                     knowledge_context = retrieval_result.output
             except Exception as e:
-                logger.error(f"知识检索异常: {e}")
-                knowledge_context = "知识库检索遇到问题，请基于专业判断生成内容。"
+                logger.error(f"Knowledge retrieval exception: {e}")
+                knowledge_context = "Knowledge base retrieval encountered problems, please generate content based on professional judgment."
             
-            # 构建内容生成提示
-            content_prompt = f"""请为以下章节生成专业的内容：
+            # Build content generation prompt
+            content_prompt = f"""Please generate professional content for the following section:
 
-章节标题：{section_title}
-章节级别：{self.section_info.get('level', 1)}
-报告标题：{report_title}
+Section Title: {section_title}
+Section Level: {self.section_info.get('level', 1)}
+Report Title: {report_title}
 
-知识库相关信息：
+Relevant Knowledge Base Information:
 {knowledge_context}
 
-请基于以上信息，为该章节生成内容。要求：
+Please generate content for this section based on the above information. Requirements:
 
-1. 内容结构：
-   - 如果是1-2级标题：提供该部分的概述、重要性和主要观点
-   - 如果是3级以上标题：提供具体的实施细节、方法或案例
+1. Content Structure:
+   - If 1-2 level heading: provide overview, importance, and main points for this section
+   - If 3+ level heading: provide specific implementation details, methods, or cases
 
-2. 内容质量：
-   - 确保与章节标题高度相关
-   - 内容准确、专业、有价值
-   - 语言清晰易懂，逻辑性强
-   - 长度适中（200-800字）
+2. Content Quality:
+   - Ensure high relevance to the section title
+   - Content should be accurate, professional, and valuable
+   - Language should be clear and understandable with strong logic
+   - Moderate length (200-800 words)
 
-3. 格式要求：
-   - 直接输出章节正文内容
-   - 不要包含章节标题（会自动添加）
-   - 可以使用子标题、列表等格式
-   - 必要时可以包含具体的数据或建议
+3. Format Requirements:
+   - Output section body content directly
+   - Do not include section title (will be added automatically)
+   - May use sub-headings, lists, and other formats
+   - Include specific data or recommendations when necessary
 
-请开始生成该章节的内容："""
+Please start generating the content for this section:"""
             
             self.update_memory("user", content_prompt)
             
-            # 调用LLM生成内容
+            # Call LLM to generate content
             response = await self.llm.ask(self.memory.messages)
             
             if response and response.strip():
@@ -134,28 +174,49 @@ class SectionAgent(BaseAgent):
                 self.is_completed = True
                 self.update_memory("assistant", self.generated_content)
                 
-                logger.info(f"章节'{section_title}'内容生成完成，长度: {len(self.generated_content)}")
-                return f"章节'{section_title}'生成完成"
+                logger.info(f"Section '{section_title}' content generation completed, length: {len(self.generated_content)}")
+                return f"Section '{section_title}' generation completed"
             else:
-                logger.warning(f"LLM未返回有效内容for章节: {section_title}")
-                return f"正在生成章节'{section_title}'的内容..."
+                logger.warning(f"LLM returned no valid content for section: {section_title}")
+                return f"Generating content for section '{section_title}'..."
                 
         except Exception as e:
-            logger.error(f"章节生成步骤执行失败: {e}")
-            return f"章节生成失败: {str(e)}"
+            logger.error(f"Section generation step execution failed: {e}")
+            return f"Section generation failed: {str(e)}"
     
     def get_content(self) -> str:
-        """获取生成的内容"""
+        """
+        Get the generated content.
+        
+        Returns:
+            str: The generated section content.
+        """
         return self.generated_content
     
     def is_finished(self) -> bool:
-        """检查是否完成"""
+        """
+        Check if the section generation is finished.
+        
+        Returns:
+            bool: True if the section generation is complete and the agent is finished.
+        """
         return self.is_completed and self.state == AgentState.FINISHED
     
     async def run_section_generation(self) -> str:
-        """运行章节生成任务"""
+        """
+        Run the section generation task.
+        
+        This method orchestrates the complete section generation process by
+        running the agent until completion and returning the generated content.
+        
+        Returns:
+            str: The generated section content.
+            
+        Raises:
+            Exception: If section generation fails.
+        """
         try:
-            # 运行Agent直到完成
+            # Run agent until completion
             while not self.is_finished():
                 result = await self.step()
                 if self.state == AgentState.ERROR:
@@ -164,6 +225,6 @@ class SectionAgent(BaseAgent):
             return self.generated_content
             
         except Exception as e:
-            logger.error(f"章节生成运行失败: {e}")
+            logger.error(f"Section generation execution failed: {e}")
             self.state = AgentState.ERROR
             raise

@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-结构化报告生成Agent
+Multi-Section Report Generator Agent
+
+This module provides a sophisticated agent for generating structured reports
+by coordinating multiple section agents. It supports parallel and sequential
+processing modes, content quality assessment, and automatic polishing.
 """
 
 import json
@@ -21,7 +25,31 @@ from ..prompt import report_multi as prompts
 
 
 class ReportGeneratorAgent(BaseAgent):
-    """结构化报告生成协调器Agent"""
+    """
+    Structured Report Generator Coordinator Agent
+    
+    This agent coordinates multiple SectionAgents to generate structured reports
+    based on templates. It supports both parallel and sequential processing modes,
+    automatic content quality assessment, and polishing capabilities.
+    
+    Attributes:
+        template_path (Optional[Path]): Path to the report template file
+        output_path (Optional[Path]): Path where generated reports will be saved
+        knowledge_base_path (str): Path to the knowledge base for content retrieval
+        parallel_sections (bool): Whether to process sections in parallel
+        max_concurrent (int): Maximum number of concurrent section processing
+        enable_polishing (bool): Whether to enable content polishing
+        
+    Example:
+        >>> agent = ReportGeneratorAgent(
+        ...     template_path="templates/report.md",
+        ...     knowledge_base_path="data/documents",
+        ...     output_path="output/report.md",
+        ...     parallel_sections=True,
+        ...     max_concurrent=3
+        ... )
+        >>> result = await agent.run_with_template("template.md", "output.md")
+    """
     
     def __init__(self, 
                  template_path: Optional[str] = None,
@@ -31,6 +59,18 @@ class ReportGeneratorAgent(BaseAgent):
                  max_concurrent: int = 3,
                  enable_polishing: bool = True,
                  **kwargs):
+        """
+        Initialize the ReportGeneratorAgent.
+        
+        Args:
+            template_path (Optional[str]): Path to the report template file
+            knowledge_base_path (str): Path to the knowledge base directory
+            output_path (Optional[str]): Path where the generated report will be saved
+            parallel_sections (bool): Whether to process sections in parallel
+            max_concurrent (int): Maximum number of concurrent section processing
+            enable_polishing (bool): Whether to enable content polishing and quality checks
+            **kwargs: Additional keyword arguments passed to the base class
+        """
         super().__init__(**kwargs)
         
         self.template_path = Path(template_path) if template_path else None
@@ -39,37 +79,49 @@ class ReportGeneratorAgent(BaseAgent):
         self.parallel_sections = parallel_sections
         self.max_concurrent = max_concurrent
         
-        # 初始化工具
+        # Initialize tools
         self.knowledge_tool = KnowledgeRetrievalTool(knowledge_base_path)
         self.converter = MarkdownConverter()
         
-        # 报告模板和内容
+        # Report template and content
         self.template_structure = None
         self.report_content = {}
         
-        # 章节Agent管理
+        # Section agent management
         self.section_agents: List[SectionAgent | SectionAgentReAct] = []
         self.completed_sections = set()
         self.active_agents: Dict[int, SectionAgentReAct] = {}
         
-        # 内容质量控制
+        # Content quality control
         self.enable_polishing = enable_polishing
         self.quality_check_passed = False
         self.polishing_completed = False
         
-        # 设置Agent默认参数
+        # Set agent default parameters
         if not self.name:
             self.name = "report_coordinator"
         if not self.description:
-            self.description = "协调多个SectionAgent生成结构化报告的智能Agent"
+            self.description = "Intelligent agent that coordinates multiple SectionAgents to generate structured reports"
         
-        # 设置系统提示
+        # Set system prompt
         self.system_prompt = prompts.SYSTEM_PROMPT
     
     async def initialize_from_template(self, template_content: str):
-        """从模板内容初始化Agent"""
+        """
+        Initialize the agent from template content.
+        
+        This method parses the template content (either Markdown or JSON format)
+        and sets up the report structure and section agents accordingly.
+        
+        Args:
+            template_content (str): The template content in Markdown or JSON format
+            
+        Raises:
+            ValueError: If template conversion fails
+            Exception: If template initialization fails
+        """
         try:
-            # 如果是Markdown模板，转换为JSON结构
+            # If it's a Markdown template, convert to JSON structure
             if template_content.strip().startswith('#'):
                 conversion_request = ConversionRequest(
                     source_format="markdown",
@@ -82,29 +134,34 @@ class ReportGeneratorAgent(BaseAgent):
                 if conversion_result.success:
                     self.template_structure = conversion_result.result
                 else:
-                    raise ValueError(f"模板转换失败: {conversion_result.error}")
+                    raise ValueError(f"Template conversion failed: {conversion_result.error}")
             else:
-                # 假设是JSON格式
+                # Assume JSON format
                 self.template_structure = json.loads(template_content)
             
-            # 初始化报告内容结构
+            # Initialize report content structure
             self._initialize_report_structure()
             
-            logger.info(f"模板初始化完成，共 {len(self.template_structure.get('content', []))} 个部分")
+            logger.info(f"Template initialization completed with {len(self.template_structure.get('content', []))} sections")
             
         except Exception as e:
-            logger.error(f"模板初始化失败: {e}")
+            logger.error(f"Template initialization failed: {e}")
             raise
     
     def _initialize_report_structure(self):
-        """初始化报告内容结构和章节Agents"""
+        """
+        Initialize report content structure and section agents.
+        
+        This method creates the basic report structure and instantiates
+        the appropriate section agents for each heading in the template.
+        """
         self.report_content = {
-            "title": self.template_structure.get("title", "报告"),
+            "title": self.template_structure.get("title", "Report"),
             "metadata": self.template_structure.get("metadata", {}),
             "content": []
         }
         
-        # 为每个模板部分创建章节结构和对应的Agent
+        # Create section structure and corresponding agents for each template part
         report_context = {
             "title": self.report_content["title"],
             "metadata": self.report_content["metadata"]
@@ -122,8 +179,8 @@ class ReportGeneratorAgent(BaseAgent):
                 }
                 self.report_content["content"].append(section)
                 
-                # 为每个章节创建专用的SectionAgent
-                section_title = section.get("content", f"章节{section['id']}")
+                # Create dedicated SectionAgent for each section
+                section_title = section.get("content", f"Section {section['id']}")
                 if settings.section_agent_react:
                     section_agent = SectionAgentReAct(
                         # name=f"section_agent_{section['id']}",
@@ -142,24 +199,35 @@ class ReportGeneratorAgent(BaseAgent):
                 self.section_agents.append(section_agent)
     
     async def step(self) -> str:
-        """执行单步操作 - 协调章节生成"""
+        """
+        Execute a single step operation - coordinate section generation.
+        
+        This method manages the overall report generation process,
+        including section generation, content polishing, and quality checks.
+        
+        Returns:
+            str: Status message describing the current step result
+            
+        Raises:
+            Exception: If coordination step execution fails
+        """
         try:
-            # 检查是否有待处理的章节
+            # Check if there are pending sections
             pending_sections = [
                 section for section in self.report_content["content"]
                 if not section.get("completed", False)
             ]
             
             if not pending_sections:
-                # 所有章节已完成，进行内容润色和质量检查
+                # All sections completed, proceed with content polishing and quality check
                 if self.enable_polishing and not self.polishing_completed:
                     return await self._polish_and_check_content()
                 else:
-                    # 润色完成，保存报告并终止
+                    # Polishing completed, save report and terminate
                     await self._save_report()
-                    logger.info("所有章节已完成，保存报告")
+                    logger.info("All sections completed, saving report")
                     self.state = AgentState.FINISHED
-                    return "报告生成完成"
+                    return "Report generation completed"
             
             if self.parallel_sections:
                 return await self._handle_parallel_generation()
@@ -167,21 +235,29 @@ class ReportGeneratorAgent(BaseAgent):
                 return await self._handle_sequential_generation()
                 
         except Exception as e:
-            logger.error(f"协调步骤执行失败: {e}")
-            return f"执行失败: {str(e)}"
+            logger.error(f"Coordination step execution failed: {e}")
+            return f"Execution failed: {str(e)}"
     
     async def _handle_sequential_generation(self) -> str:
-        """处理串行章节生成"""
-        # 找到下一个待处理的章节
+        """
+        Handle sequential section generation.
+        
+        Process sections one by one in order, ensuring each section
+        is completed before moving to the next.
+        
+        Returns:
+            str: Status message describing the current section processing
+        """
+        # Find the next pending section
         for i, section in enumerate(self.report_content["content"]):
             if not section.get("completed", False):
                 section_agent = self.section_agents[i]
-                section_title = section.get("content", f"第{i+1}章节")
+                section_title = section.get("content", f"Section {i+1}")
                 
-                logger.info(f"开始生成章节: {section_title}")
+                logger.info(f"Starting section generation: {section_title}")
                 
                 try:
-                    # 运行章节Agent
+                    # Run section agent
                     generated_content = await section_agent.run_section_generation()
                     
                     if generated_content:
@@ -190,54 +266,62 @@ class ReportGeneratorAgent(BaseAgent):
                         self.completed_sections.add(section["id"])
                         
                         progress = f"{len(self.completed_sections)}/{len(self.report_content['content'])}"
-                        logger.info(f"章节'{section_title}'生成完成，进度: {progress}")
+                        logger.info(f"Section '{section_title}' generation completed, progress: {progress}")
                         
-                        return f"完成章节 '{section_title}' ({progress})"
+                        return f"Completed section '{section_title}' ({progress})"
                     else:
-                        return f"正在生成章节 '{section_title}'"
+                        return f"Generating section '{section_title}'"
                         
                 except Exception as e:
-                    logger.error(f"章节'{section_title}'生成失败: {e}")
-                    section["generated_content"] = f"[生成失败] {str(e)}"
+                    logger.error(f"Section '{section_title}' generation failed: {e}")
+                    section["generated_content"] = f"[Generation failed] {str(e)}"
                     section["completed"] = True
-                    return f"章节 '{section_title}' 生成失败: {str(e)}"
+                    return f"Section '{section_title}' generation failed: {str(e)}"
         
-        return "所有章节处理完成"
+        return "All sections processed"
     
     async def _handle_parallel_generation(self) -> str:
-        """处理并行章节生成"""
-        # 获取所有未完成的章节
+        """
+        Handle parallel section generation.
+        
+        Process multiple sections concurrently with a limit on
+        the maximum number of concurrent operations.
+        
+        Returns:
+            str: Status message describing the parallel processing result
+        """
+        # Get all incomplete sections
         pending_sections = [
             (i, section) for i, section in enumerate(self.report_content["content"])
             if not section.get("completed", False)
         ]
         
         if not pending_sections:
-            return "所有章节已完成"
+            return "All sections completed"
         
-        # 限制并发数量
+        # Limit concurrency
         batch_size = min(len(pending_sections), self.max_concurrent)
         current_batch = pending_sections[:batch_size]
         
-        logger.info(f"开始并行生成 {len(current_batch)} 个章节")
+        logger.info(f"Starting parallel generation of {len(current_batch)} sections")
         
-        # 创建并发任务
+        # Create concurrent tasks
         tasks = []
         for section_idx, section in current_batch:
             section_agent = self.section_agents[section_idx]
             task = self._generate_section_with_agent(section_idx, section, section_agent)
             tasks.append(task)
         
-        # 等待所有任务完成
+        # Wait for all tasks to complete
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # 处理结果
+        # Process results
         completed_count = 0
         for i, result in enumerate(results):
             section_idx, section = current_batch[i]
             if isinstance(result, Exception):
-                logger.error(f"章节并行生成失败: {result}")
-                section["generated_content"] = f"[生成失败] {str(result)}"
+                logger.error(f"Parallel section generation failed: {result}")
+                section["generated_content"] = f"[Generation failed] {str(result)}"
             else:
                 section["generated_content"] = result
             
@@ -246,74 +330,107 @@ class ReportGeneratorAgent(BaseAgent):
             completed_count += 1
         
         progress = f"{len(self.completed_sections)}/{len(self.report_content['content'])}"
-        logger.info(f"并行生成完成 {completed_count} 个章节，总进度: {progress}")
+        logger.info(f"Parallel generation completed {completed_count} sections, total progress: {progress}")
         
-        return f"并行完成 {completed_count} 个章节 ({progress})"
+        return f"Parallel completed {completed_count} sections ({progress})"
     
     async def _generate_section_with_agent(self, section_idx: int, section: Dict[str, Any], agent: SectionAgentReAct) -> str:
-        """使用指定Agent生成章节内容"""
+        """
+        Generate section content using the specified agent.
+        
+        Args:
+            section_idx (int): Index of the section being generated
+            section (Dict[str, Any]): Section information dictionary
+            agent (SectionAgentReAct): The agent responsible for generating this section
+            
+        Returns:
+            str: Generated content for the section
+            
+        Raises:
+            Exception: If section generation fails
+        """
         try:
-            section_title = section.get("content", f"章节{section_idx + 1}")
-            logger.info(f"开始使用Agent生成章节: {section_title}")
+            section_title = section.get("content", f"Section {section_idx + 1}")
+            logger.info(f"Starting agent-based section generation: {section_title}")
             
             content = await agent.run_section_generation()
-            return content if content else f"[空内容] {section_title}"
+            return content if content else f"[Empty content] {section_title}"
         except Exception as e:
-            logger.error(f"Agent生成章节{section_idx + 1}失败: {e}")
+            logger.error(f"Agent generation for section {section_idx + 1} failed: {e}")
             raise
     
     async def _polish_and_check_content(self) -> str:
-        """润色和检查报告内容质量"""
+        """
+        Polish and check report content quality.
+        
+        This method performs comprehensive quality assessment and improvement
+        of the generated report content, including:
+        - Content quality evaluation
+        - Content polishing based on identified issues
+        - Consistency checking across sections
+        - Final quality validation
+        
+        Returns:
+            str: Status message describing the polishing result
+        """
         try:
-            logger.info("开始对整体报告内容进行润色和质量检查")
+            logger.info("Starting overall report content polishing and quality check")
             
-            # 1. 内容质量评估
+            # 1. Content quality assessment
             quality_issues = await self._assess_content_quality()
             
-            # 2. 内容润色
+            # 2. Content polishing
             if quality_issues:
-                logger.info(f"发现 {len(quality_issues)} 个质量问题，开始润色")
+                logger.info(f"Found {len(quality_issues)} quality issues, starting polishing")
                 await self._polish_content(quality_issues)
             
-            # 3. 一致性检查
+            # 3. Consistency check
             consistency_issues = await self._check_content_consistency()
             
-            # 4. 修复一致性问题
+            # 4. Fix consistency issues
             if consistency_issues:
-                logger.info(f"发现 {len(consistency_issues)} 个一致性问题，开始修复")
+                logger.info(f"Found {len(consistency_issues)} consistency issues, starting fixes")
                 await self._fix_consistency_issues(consistency_issues)
             
-            # 5. 最终质量验证
+            # 5. Final quality validation
             final_quality = await self._final_quality_check()
             
             self.polishing_completed = True
             self.quality_check_passed = final_quality
             
             if final_quality:
-                logger.info("✅ 内容润色和质量检查完成，报告质量良好")
-                return "内容润色和质量检查完成"
+                logger.info("✅ Content polishing and quality check completed, report quality is good")
+                return "Content polishing and quality check completed"
             else:
-                logger.warning("⚠️ 内容润色完成，但仍存在一些质量问题")
-                return "内容润色完成（存在轻微质量问题）"
+                logger.warning("⚠️ Content polishing completed, but some quality issues remain")
+                return "Content polishing completed (minor quality issues remain)"
                 
         except Exception as e:
-            logger.error(f"内容润色和检查失败: {e}")
+            logger.error(f"Content polishing and checking failed: {e}")
             self.polishing_completed = True
-            return f"内容润色失败: {str(e)}"
+            return f"Content polishing failed: {str(e)}"
     
     async def _assess_content_quality(self) -> List[Dict[str, Any]]:
-        """评估内容质量"""
+        """
+        Assess content quality for each section.
+        
+        Evaluates the quality of generated content using LLM-based assessment
+        and identifies sections that need improvement.
+        
+        Returns:
+            List[Dict[str, Any]]: List of quality issues found in sections
+        """
         quality_issues = []
         
-        # 检查每个章节的内容质量
+        # Check content quality for each section
         for i, section in enumerate(self.report_content["content"]):
             if not section.get("generated_content"):
                 continue
                 
-            section_title = section.get("content", f"章节{i+1}")
+            section_title = section.get("content", f"Section {i+1}")
             content = section["generated_content"]
             
-            # 构建质量评估提示
+            # Build quality assessment prompt
             quality_prompt = prompts.QUALITY_ASSESSMENT_PROMPT.format(
                 section_title=section_title,
                 content=content
@@ -324,13 +441,13 @@ class ReportGeneratorAgent(BaseAgent):
             try:
                 response = await self.llm.ask(self.memory.messages)
                 if response:
-                    # 解析评估结果
+                    # Parse assessment results
                     import re
                     json_match = re.search(r'\{[^{}]*}', response, re.DOTALL)
                     if json_match:
                         evaluation = json.loads(json_match.group())
                         
-                        # 如果质量分数低于阈值，记录为问题
+                        # If quality score is below threshold, record as issue
                         if evaluation.get("overall_score", 5) < 4:
                             quality_issues.append({
                                 "section_idx": i,
@@ -342,21 +459,26 @@ class ReportGeneratorAgent(BaseAgent):
                 self.update_memory("assistant", response)
                 
             except Exception as e:
-                logger.error(f"章节'{section_title}'质量评估失败: {e}")
+                logger.error(f"Quality assessment for section '{section_title}' failed: {e}")
         
         return quality_issues
     
     async def _polish_content(self, quality_issues: List[Dict[str, Any]]) -> None:
-        """根据质量问题润色内容"""
+        """
+        Polish content based on identified quality issues.
+        
+        Args:
+            quality_issues (List[Dict[str, Any]]): List of quality issues to address
+        """
         for issue_info in quality_issues:
             section_idx = issue_info["section_idx"]
             section_title = issue_info["section_title"]
             evaluation = issue_info["evaluation"]
             original_content = issue_info["content"]
             
-            logger.info(f"正在润色章节: {section_title}")
+            logger.info(f"Polishing section: {section_title}")
             
-            # 构建润色提示
+            # Build polishing prompt
             polish_prompt = prompts.POLISH_CONTENT_PROMPT.format(
                 section_title=section_title,
                 original_content=original_content,
@@ -369,23 +491,32 @@ class ReportGeneratorAgent(BaseAgent):
             try:
                 response = await self.llm.ask(self.memory.messages)
                 if response and response.strip():
-                    # 更新章节内容
+                    # Update section content
                     polished_content = response.strip()
                     self.report_content["content"][section_idx]["generated_content"] = polished_content
                     
-                    logger.info(f"章节'{section_title}'润色完成")
+                    logger.info(f"Section '{section_title}' polishing completed")
                     self.update_memory("assistant", polished_content)
                 else:
-                    logger.warning(f"章节'{section_title}'润色未获得有效响应")
+                    logger.warning(f"Section '{section_title}' polishing received no valid response")
                     
             except Exception as e:
-                logger.error(f"章节'{section_title}'润色失败: {e}")
+                logger.error(f"Section '{section_title}' polishing failed: {e}")
     
     async def _check_content_consistency(self) -> List[Dict[str, str]]:
-        """检查内容一致性"""
+        """
+        Check content consistency across sections.
+        
+        Analyzes the overall report for consistency issues such as
+        contradictory information, inconsistent terminology, or
+        misaligned content flow.
+        
+        Returns:
+            List[Dict[str, str]]: List of consistency issues found
+        """
         consistency_issues = []
         
-        # 收集所有章节内容
+        # Collect all section content
         all_content = ""
         section_summaries = []
         
@@ -396,7 +527,7 @@ class ReportGeneratorAgent(BaseAgent):
                 all_content += f"\n\n## {section_title}\n{content}"
                 section_summaries.append(f"- {section_title}: {content[:100]}...")
         
-        # 构建一致性检查提示
+        # Build consistency check prompt
         consistency_prompt = prompts.CONSISTENCY_CHECK_PROMPT.format(
             report_title=self.report_content.get('title', ''),
             section_summaries=chr(10).join(section_summaries),
@@ -408,7 +539,7 @@ class ReportGeneratorAgent(BaseAgent):
         try:
             response = await self.llm.ask(self.memory.messages)
             if response:
-                # 解析一致性检查结果
+                # Parse consistency check results
                 import re
                 json_match = re.search(r'\{.*}', response, re.DOTALL)
                 if json_match:
@@ -418,21 +549,26 @@ class ReportGeneratorAgent(BaseAgent):
                 self.update_memory("assistant", response)
                 
         except Exception as e:
-            logger.error(f"一致性检查失败: {e}")
+            logger.error(f"Consistency check failed: {e}")
         
         return consistency_issues
     
     async def _fix_consistency_issues(self, consistency_issues: List[Dict[str, str]]) -> None:
-        """修复一致性问题"""
+        """
+        Fix consistency issues identified in the report.
+        
+        Args:
+            consistency_issues (List[Dict[str, str]]): List of consistency issues to fix
+        """
         for issue in consistency_issues:
-            issue_type = issue.get("type", "未知问题")
+            issue_type = issue.get("type", "Unknown issue")
             description = issue.get("description", "")
             affected_sections = issue.get("affected_sections", [])
             suggestion = issue.get("suggestion", "")
             
-            logger.info(f"正在修复一致性问题: {issue_type}")
+            logger.info(f"Fixing consistency issue: {issue_type}")
             
-            # 找到受影响的章节
+            # Find affected sections
             for section in self.report_content["content"]:
                 section_title = section.get("content", "")
                 if any(affected_section in section_title for affected_section in affected_sections):
@@ -441,7 +577,7 @@ class ReportGeneratorAgent(BaseAgent):
                     if not original_content:
                         continue
                     
-                    # 构建修复提示
+                    # Build fix prompt
                     fix_prompt = prompts.FIX_CONSISTENCY_PROMPT.format(
                         section_title=section_title,
                         original_content=original_content,
@@ -457,16 +593,24 @@ class ReportGeneratorAgent(BaseAgent):
                         if response and response.strip():
                             fixed_content = response.strip()
                             section["generated_content"] = fixed_content
-                            logger.info(f"章节'{section_title}'一致性问题修复完成")
+                            logger.info(f"Section '{section_title}' consistency issue fixed")
                             self.update_memory("assistant", fixed_content)
                         
                     except Exception as e:
-                        logger.error(f"章节'{section_title}'一致性问题修复失败: {e}")
+                        logger.error(f"Section '{section_title}' consistency fix failed: {e}")
     
     async def _final_quality_check(self) -> bool:
-        """最终质量检查"""
+        """
+        Perform final quality check on the complete report.
+        
+        Conducts a comprehensive final assessment of the entire report
+        to determine if it meets quality standards.
+        
+        Returns:
+            bool: True if quality check passes, False otherwise
+        """
         try:
-            # 构建最终报告内容
+            # Build final report content
             full_report = f"# {self.report_content.get('title', '')}\\n"
             
             for section in self.report_content["content"]:
@@ -475,7 +619,7 @@ class ReportGeneratorAgent(BaseAgent):
                 level_prefix = "#" * section.get("level", 1)
                 full_report += f"\n{level_prefix} {section_title}\n\n{content}\n"
             
-            # 最终质量评估提示
+            # Final quality assessment prompt
             final_check_prompt = prompts.FINAL_QUALITY_CHECK_PROMPT.format(
                 full_report=full_report
             )
@@ -485,29 +629,37 @@ class ReportGeneratorAgent(BaseAgent):
             
             if response:
                 self.update_memory("assistant", response)
-                # 简单判断是否通过
+                # Simple pass/fail determination
                 return "PASS" in response.upper()
             else:
                 return False
                 
         except Exception as e:
-            logger.error(f"最终质量检查失败: {e}")
+            logger.error(f"Final quality check failed: {e}")
             return False
     
     
     async def _save_report(self):
-        """保存生成的报告"""
+        """
+        Save the generated report to files.
+        
+        Saves the complete report in both JSON and Markdown formats
+        to the specified output path.
+        
+        Raises:
+            Exception: If report saving fails
+        """
         try:
-            # 构建完整的报告结构
+            # Build complete report structure
             report_document = {
                 "title": self.report_content["title"],
                 "metadata": self.report_content["metadata"],
                 "content": []
             }
             
-            # 添加生成的内容
+            # Add generated content
             for section in self.report_content["content"]:
-                # 添加标题
+                # Add heading
                 report_document["content"].append({
                     "type": "heading",
                     "level": section["level"],
@@ -515,7 +667,7 @@ class ReportGeneratorAgent(BaseAgent):
                     "attributes": {"level": section["level"]}
                 })
                 
-                # 添加生成的内容作为段落
+                # Add generated content as paragraph
                 if section.get("generated_content"):
                     report_document["content"].append({
                         "type": "paragraph",
@@ -523,13 +675,13 @@ class ReportGeneratorAgent(BaseAgent):
                         "attributes": {}
                     })
             
-            # 保存JSON格式
+            # Save JSON format
             if self.output_path:
                 json_path = self.output_path.with_suffix('.json')
                 with open(json_path, 'w', encoding='utf-8') as f:
                     json.dump(report_document, f, ensure_ascii=False, indent=2)
                 
-                # 转换并保存Markdown格式
+                # Convert and save Markdown format
                 conversion_request = ConversionRequest(
                     source_format="json",
                     target_format="markdown",
@@ -543,32 +695,50 @@ class ReportGeneratorAgent(BaseAgent):
                     with open(md_path, 'w', encoding='utf-8') as f:
                         f.write(conversion_result.result)
                     
-                    logger.info(f"报告已保存: {json_path}, {md_path}")
+                    logger.info(f"Report saved: {json_path}, {md_path}")
                 else:
-                    logger.warning(f"Markdown转换失败: {conversion_result.error}")
+                    logger.warning(f"Markdown conversion failed: {conversion_result.error}")
             else:
-                logger.info("未指定输出路径，报告未保存到文件")
+                logger.info("No output path specified, report not saved to file")
             
         except Exception as e:
-            logger.error(f"报告保存失败: {e}")
+            logger.error(f"Report saving failed: {e}")
     
     def get_progress(self) -> Dict[str, Any]:
-        """获取生成进度"""
+        """
+        Get report generation progress information.
+        
+        Returns comprehensive progress information including section completion,
+        overall progress percentage, active sections, and current processing phase.
+        
+        Returns:
+            Dict[str, Any]: Progress information dictionary containing:
+                - total_sections: Total number of sections in the report
+                - completed_sections: Number of completed sections
+                - progress_percentage: Overall progress as a percentage
+                - active_sections: List of currently active section titles
+                - remaining_sections: Number of remaining sections
+                - mode: Processing mode ("parallel" or "sequential")
+                - polishing_enabled: Whether polishing is enabled
+                - polishing_completed: Whether polishing phase is completed
+                - quality_check_passed: Whether quality check passed
+                - current_phase: Current processing phase ("generation" or "polishing")
+        """
         total_sections = len(self.report_content.get("content", []))
         completed_sections = len(self.completed_sections)
         
-        # 获取正在处理的章节
+        # Get currently processing sections
         active_sections = []
         for i, agent in enumerate(self.section_agents):
             if agent.state == AgentState.RUNNING and not self.report_content["content"][i].get("completed", False):
-                active_sections.append(self.report_content["content"][i].get("content", f"章节{i+1}"))
+                active_sections.append(self.report_content["content"][i].get("content", f"Section {i+1}"))
         
-        # 计算整体进度（包括润色阶段）
+        # Calculate overall progress (including polishing phase)
         base_progress = (completed_sections / total_sections * 80) if total_sections > 0 else 0
         if self.polishing_completed:
-            base_progress += 20  # 润色完成额外加20%
+            base_progress += 20  # Additional 20% for completed polishing
         elif completed_sections == total_sections and self.enable_polishing:
-            base_progress += 10  # 润色进行中加10%
+            base_progress += 10  # Additional 10% for polishing in progress
         
         return {
             "total_sections": total_sections,
@@ -584,21 +754,36 @@ class ReportGeneratorAgent(BaseAgent):
         }
     
     async def run_with_template(self, template_path: str, output_path: Optional[str] = None) -> str:
-        """使用指定模板运行Agent"""
+        """
+        Run the agent with a specified template.
+        
+        This is a convenience method that loads a template file,
+        initializes the agent, and runs the report generation process.
+        
+        Args:
+            template_path (str): Path to the template file to use
+            output_path (Optional[str]): Path where the generated report will be saved
+            
+        Returns:
+            str: Result message from the agent execution
+            
+        Raises:
+            Exception: If template running fails
+        """
         try:
-            # 加载模板
+            # Load template
             template_content = Path(template_path).read_text(encoding='utf-8')
             await self.initialize_from_template(template_content)
             
-            # 设置输出路径
+            # Set output path
             if output_path:
                 self.output_path = Path(output_path)
             
-            # 运行Agent
+            # Run agent
             result = await self.run()
             
             return result
             
         except Exception as e:
-            logger.error(f"模板运行失败: {e}")
+            logger.error(f"Template running failed: {e}")
             raise

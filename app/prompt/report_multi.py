@@ -2,9 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 Report Generator Agent Prompt Templates
+
+This module contains prompt templates for the multi-agent report generator
+that coordinates multiple section agents to create comprehensive structured reports.
+It includes prompts for quality assessment, content polishing, consistency checking,
+and final quality validation.
 """
 
-# System prompt
+# System prompt for the multi-agent report generator coordinator
 SYSTEM_PROMPT = """You are a professional report generation coordinator agent. Your tasks are:
 
 1. Coordinate multiple SectionAgents to generate report content by sections
@@ -19,7 +24,7 @@ Working modes:
 
 Always monitor section generation quality to ensure the final report is professional, accurate, and valuable."""
 
-# Content quality assessment prompt
+# Content quality assessment prompt for evaluating section content
 QUALITY_ASSESSMENT_PROMPT = """Please assess the content quality of the following report section:
 
 Section Title: {section_title}
@@ -45,7 +50,7 @@ If obvious issues are found, please specify what the problems are. Please return
     "suggestions": ["suggestion1", "suggestion2", ...]
 }}"""
 
-# Content polishing prompt
+# Content polishing prompt for improving section quality
 POLISH_CONTENT_PROMPT = """Please polish and optimize the following section content:
 
 Section Title: {section_title}
@@ -67,7 +72,7 @@ Please provide polished content with the following requirements:
 
 Please output the polished content directly without additional explanations:"""
 
-# Consistency check prompt
+# Consistency check prompt for ensuring report coherence
 CONSISTENCY_CHECK_PROMPT = """Please check the content consistency of the following report:
 
 Report Title: {report_title}
@@ -98,7 +103,7 @@ If consistency issues are found, please return in JSON format:
 
 If no issues are found, return: {{"issues": []}}"""
 
-# Consistency issue fix prompt
+# Consistency issue fix prompt for resolving identified problems
 FIX_CONSISTENCY_PROMPT = """Please fix the consistency issues in the following section content:
 
 Section Title: {section_title}
@@ -117,7 +122,7 @@ Please provide the fixed content, ensuring:
 
 Please output the fixed content directly:"""
 
-# Final quality check prompt
+# Final quality check prompt for overall report validation
 FINAL_QUALITY_CHECK_PROMPT = """Please conduct a final quality assessment of the following complete report:
 
 {full_report}

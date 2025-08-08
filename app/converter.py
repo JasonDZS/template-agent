@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Markdown和JSON互转核心模块
+Markdown and JSON Conversion Core Module
+
+This module provides comprehensive functionality for converting between
+Markdown and JSON formats, including parsing, rendering, and structured
+document representation.
 """
 
 import json
@@ -17,28 +21,44 @@ from app.config import settings
 
 
 class MarkdownParser:
-    """Markdown解析器"""
+    """Parser for converting Markdown text to structured document objects.
+    
+    This class provides comprehensive parsing capabilities for Markdown syntax,
+    including headings, code blocks, lists, blockquotes, images, and metadata.
+    
+    Attributes:
+        current_pos: Current position in the line array during parsing
+        lines: Array of text lines being parsed
+    """
     
     def __init__(self):
+        """Initialize the Markdown parser."""
         self.current_pos = 0
         self.lines = []
     
     def parse(self, markdown_text: str) -> MarkdownDocument:
-        """解析Markdown文本为文档对象"""
+        """Parse Markdown text into a document object.
+        
+        Args:
+            markdown_text: The Markdown text to parse
+            
+        Returns:
+            MarkdownDocument object containing the parsed structure
+        """
         self.lines = markdown_text.split('\n')
         self.current_pos = 0
         
-        # 提取元数据
+        # Extract metadata
         metadata = self._extract_metadata()
         
-        # 解析内容
+        # Parse content
         elements = []
         while self.current_pos < len(self.lines):
             element = self._parse_next_element()
             if element:
                 elements.append(element)
         
-        # 获取标题（如果第一个元素是一级标题）
+        # Get title (if first element is h1)
         title = None
         if elements and isinstance(elements[0], HeadingElement) and elements[0].level == 1:
             title = elements[0].content
@@ -50,24 +70,28 @@ class MarkdownParser:
         )
     
     def _extract_metadata(self) -> Optional[Dict[str, Any]]:
-        """提取HTML注释中的元数据"""
+        """Extract metadata from HTML comments.
+        
+        Returns:
+            Dictionary of metadata key-value pairs, or None if no metadata found
+        """
         metadata = {}
         
         while self.current_pos < len(self.lines):
             line = self.lines[self.current_pos].strip()
             
-            # 检查是否是元数据注释
+            # Check if this is a metadata comment
             if line.startswith('<!-- Metadata:'):
                 self.current_pos += 1
                 
-                # 解析元数据内容
+                # Parse metadata content
                 while self.current_pos < len(self.lines):
                     line = self.lines[self.current_pos].strip()
                     if line == '-->':
                         self.current_pos += 1
                         break
                     
-                    # 解析键值对
+                    # Parse key-value pairs
                     if ':' in line:
                         key, value = line.split(':', 1)
                         metadata[key.strip()] = value.strip()
@@ -75,7 +99,7 @@ class MarkdownParser:
                     self.current_pos += 1
                 break
             elif line:
-                # 遇到非空行且不是元数据，停止搜索
+                # Encountered non-empty line that's not metadata, stop searching
                 break
             
             self.current_pos += 1
@@ -83,52 +107,60 @@ class MarkdownParser:
         return metadata if metadata else None
     
     def _parse_next_element(self) -> Optional[MarkdownElement]:
-        """解析下一个元素"""
+        """Parse the next element in the document.
+        
+        Returns:
+            The next parsed MarkdownElement, or None if end of document
+        """
         if self.current_pos >= len(self.lines):
             return None
         
         line = self.lines[self.current_pos].strip()
         
-        # 跳过空行
+        # Skip empty lines
         if not line:
             self.current_pos += 1
             return self._parse_next_element()
         
-        # 解析标题
+        # Parse heading
         if line.startswith('#'):
             return self._parse_heading()
         
-        # 解析代码块
+        # Parse code block
         if line.startswith('```'):
             return self._parse_code_block()
         
-        # 解析列表
+        # Parse list
         if re.match(r'^[\-\*\+]\s', line) or re.match(r'^\d+\.\s', line):
             return self._parse_list()
         
-        # 解析引用
+        # Parse blockquote
         if line.startswith('>'):
             return self._parse_blockquote()
         
-        # 解析水平分割线
+        # Parse horizontal rule
         if re.match(r'^[\-\*_]{3,}$', line):
             self.current_pos += 1
             return MarkdownElement(type=ElementType.HORIZONTAL_RULE)
         
-        # 解析图片
+        # Parse image
         img_match = re.match(r'!\[([^\]]*)\]\(([^)]+)\)', line)
         if img_match:
             return self._parse_image(img_match)
         
-        # 默认作为段落处理
+        # Default to paragraph
         return self._parse_paragraph()
     
     def _parse_heading(self) -> HeadingElement:
-        """解析标题"""
+        """Parse a heading element.
+        
+        Returns:
+            HeadingElement with appropriate level and content
+        """
         line = self.lines[self.current_pos]
         self.current_pos += 1
         
-        # 计算标题级别
+        # Calculate heading level
         level = 0
         for char in line:
             if char == '#':
@@ -140,14 +172,18 @@ class MarkdownParser:
         return HeadingElement(level=level, content=content)
     
     def _parse_code_block(self) -> CodeBlockElement:
-        """解析代码块"""
+        """Parse a fenced code block.
+        
+        Returns:
+            CodeBlockElement with language and content
+        """
         start_line = self.lines[self.current_pos]
         self.current_pos += 1
         
-        # 提取语言
+        # Extract language
         language = start_line[3:].strip() if len(start_line) > 3 else None
         
-        # 收集代码内容
+        # Collect code content
         code_lines = []
         while self.current_pos < len(self.lines):
             line = self.lines[self.current_pos]
@@ -161,7 +197,11 @@ class MarkdownParser:
         return CodeBlockElement(language=language, content=content)
     
     def _parse_list(self) -> ListElement:
-        """解析列表"""
+        """Parse a list (ordered or unordered).
+        
+        Returns:
+            ListElement containing all list items
+        """
         items = []
         list_type = None
         start_num = 1
@@ -169,7 +209,7 @@ class MarkdownParser:
         while self.current_pos < len(self.lines):
             line = self.lines[self.current_pos].strip()
             
-            # 检查是否是列表项
+            # Check if this is a list item
             ordered_match = re.match(r'^(\d+)\.\s+(.*)$', line)
             unordered_match = re.match(r'^[\-\*\+]\s+(.*)$', line)
             
@@ -195,11 +235,11 @@ class MarkdownParser:
                 self.current_pos += 1
                 
             elif line == '':
-                # 空行，继续检查下一行
+                # Empty line, continue checking next line
                 self.current_pos += 1
                 continue
             else:
-                # 不是列表项，结束列表解析
+                # Not a list item, end list parsing
                 break
         
         return ListElement(
@@ -209,7 +249,11 @@ class MarkdownParser:
         )
     
     def _parse_blockquote(self) -> MarkdownElement:
-        """解析引用"""
+        """Parse a blockquote element.
+        
+        Returns:
+            MarkdownElement representing the blockquote
+        """
         quote_lines = []
         
         while self.current_pos < len(self.lines):
@@ -227,12 +271,19 @@ class MarkdownParser:
         return MarkdownElement(type=ElementType.BLOCKQUOTE, content=content)
     
     def _parse_image(self, match) -> ImageElement:
-        """解析图片"""
+        """Parse an image element.
+        
+        Args:
+            match: Regex match object containing image syntax
+            
+        Returns:
+            ImageElement with source, alt text, and optional title
+        """
         self.current_pos += 1
         alt = match.group(1)
         src_and_title = match.group(2)
         
-        # 分离URL和标题
+        # Separate URL and title
         parts = src_and_title.split(' "', 1)
         src = parts[0]
         title = parts[1][:-1] if len(parts) > 1 else None
@@ -240,13 +291,17 @@ class MarkdownParser:
         return ImageElement(src=src, alt=alt, title=title)
     
     def _parse_paragraph(self) -> MarkdownElement:
-        """解析段落"""
+        """Parse a paragraph element.
+        
+        Returns:
+            MarkdownElement representing a paragraph with inline elements parsed
+        """
         content_lines = []
         
         while self.current_pos < len(self.lines):
             line = self.lines[self.current_pos]
             
-            # 如果遇到空行或特殊标记，结束段落
+            # If empty line or special markers encountered, end paragraph
             if (line.strip() == '' or 
                 line.strip().startswith('#') or
                 line.strip().startswith('```') or
@@ -259,17 +314,24 @@ class MarkdownParser:
         
         content = ' '.join(line.strip() for line in content_lines)
         
-        # 解析内联元素（链接、粗体、斜体等）
+        # Parse inline elements (links, bold, italic, etc.)
         content = self._parse_inline_elements(content)
         
         return MarkdownElement(type=ElementType.PARAGRAPH, content=content)
     
     def _parse_inline_elements(self, text: str) -> str:
-        """解析内联元素（简化处理）"""
-        # 这里可以扩展以支持更复杂的内联元素解析
-        # 当前只做基础的链接解析
+        """Parse inline elements (simplified processing).
         
-        # 解析链接 [text](url)
+        This can be extended to support more complex inline element parsing.
+        Currently only handles basic link parsing.
+        
+        Args:
+            text: Text content to process
+            
+        Returns:
+            Text with inline elements processed
+        """
+        # Parse links [text](url)
         def replace_links(match):
             link_text = match.group(1)
             url = match.group(2)
@@ -281,27 +343,46 @@ class MarkdownParser:
 
 
 class MarkdownRenderer:
-    """Markdown渲染器"""
+    """Renderer for converting structured documents to Markdown text.
+    
+    This class takes MarkdownDocument objects and renders them back to
+    properly formatted Markdown text with configurable options.
+    
+    Attributes:
+        options: Conversion options that control rendering behavior
+    """
     
     def __init__(self, options: Optional[ConversionOptions] = None):
+        """Initialize the Markdown renderer.
+        
+        Args:
+            options: Optional conversion options to customize rendering
+        """
         self.options = options or ConversionOptions()
     
     def render(self, document: MarkdownDocument) -> str:
-        """渲染文档为Markdown文本"""
+        """Render a document object to Markdown text.
+        
+        Args:
+            document: The MarkdownDocument to render
+            
+        Returns:
+            Formatted Markdown text string
+        """
         result = []
         
-        # 渲染标题
+        # Render title
         if document.title and not self._has_h1_in_content(document.content):
             result.append(f"# {document.title}\n")
         
-        # 渲染元数据
+        # Render metadata
         if document.metadata and self.options.include_metadata:
             result.append("<!-- Metadata:")
             for key, value in document.metadata.items():
                 result.append(f"{key}: {value}")
             result.append("-->\n")
         
-        # 渲染内容
+        # Render content
         for element in document.content:
             rendered = self._render_element(element)
             if rendered:
@@ -310,14 +391,28 @@ class MarkdownRenderer:
         return '\n'.join(result)
     
     def _has_h1_in_content(self, elements: List[MarkdownElement]) -> bool:
-        """检查内容中是否已有一级标题"""
+        """Check if content already contains an h1 heading.
+        
+        Args:
+            elements: List of elements to check
+            
+        Returns:
+            True if an h1 heading is found, False otherwise
+        """
         for element in elements:
             if (isinstance(element, HeadingElement) and element.level == 1):
                 return True
         return False
     
     def _render_element(self, element: MarkdownElement) -> str:
-        """渲染单个元素"""
+        """Render a single element to Markdown.
+        
+        Args:
+            element: The element to render
+            
+        Returns:
+            Markdown text representation of the element
+        """
         if element.type == ElementType.HEADING:
             level = element.attributes.get("level", 1)
             return f"{'#' * level} {element.content}\n"
@@ -356,7 +451,14 @@ class MarkdownRenderer:
         return ""
     
     def _render_list(self, list_element: ListElement) -> str:
-        """渲染列表"""
+        """Render a list element to Markdown.
+        
+        Args:
+            list_element: The list element to render
+            
+        Returns:
+            Markdown text representation of the list
+        """
         if not list_element.children:
             return ""
         
@@ -375,14 +477,30 @@ class MarkdownRenderer:
 
 
 class MarkdownConverter:
-    """Markdown转换器主类"""
+    """Main converter class for Markdown and JSON transformations.
+    
+    This class provides the primary interface for converting between Markdown
+    and JSON formats, coordinating the parser and renderer components.
+    
+    Attributes:
+        parser: MarkdownParser instance for parsing operations
+        renderer: MarkdownRenderer instance for rendering operations
+    """
     
     def __init__(self):
+        """Initialize the converter with parser and renderer instances."""
         self.parser = MarkdownParser()
         self.renderer = MarkdownRenderer()
     
     def convert(self, request: ConversionRequest) -> ConversionResponse:
-        """执行转换"""
+        """Execute format conversion based on the request.
+        
+        Args:
+            request: ConversionRequest specifying source/target formats and content
+            
+        Returns:
+            ConversionResponse containing the result or error information
+        """
         try:
             if request.source_format.lower() == "markdown" and request.target_format.lower() == "json":
                 return self._markdown_to_json(request)
@@ -391,27 +509,34 @@ class MarkdownConverter:
             else:
                 return ConversionResponse(
                     success=False,
-                    error=f"不支持的转换类型: {request.source_format} -> {request.target_format}"
+                    error=f"Unsupported conversion type: {request.source_format} -> {request.target_format}"
                 )
         
         except Exception as e:
             return ConversionResponse(
                 success=False,
-                error=f"转换过程中发生错误: {str(e)}"
+                error=f"Error occurred during conversion: {str(e)}"
             )
     
     def _markdown_to_json(self, request: ConversionRequest) -> ConversionResponse:
-        """Markdown转JSON"""
+        """Convert Markdown to JSON format.
+        
+        Args:
+            request: ConversionRequest with Markdown content
+            
+        Returns:
+            ConversionResponse with JSON result or error
+        """
         if not isinstance(request.content, str):
             return ConversionResponse(
                 success=False,
-                error="Markdown内容必须是字符串类型"
+                error="Markdown content must be a string"
             )
         
-        # 解析Markdown
+        # Parse Markdown
         document = self.parser.parse(request.content)
         
-        # 转换为JSON
+        # Convert to JSON
         json_result = document.model_dump()
         
         return ConversionResponse(
@@ -425,37 +550,44 @@ class MarkdownConverter:
         )
     
     def _json_to_markdown(self, request: ConversionRequest) -> ConversionResponse:
-        """JSON转Markdown"""
+        """Convert JSON to Markdown format.
+        
+        Args:
+            request: ConversionRequest with JSON content
+            
+        Returns:
+            ConversionResponse with Markdown result or error
+        """
         if isinstance(request.content, str):
             try:
                 json_data = json.loads(request.content)
             except json.JSONDecodeError as e:
                 return ConversionResponse(
                     success=False,
-                    error=f"JSON解析错误: {str(e)}"
+                    error=f"JSON parsing error: {str(e)}"
                 )
         elif isinstance(request.content, dict):
             json_data = request.content
         else:
             return ConversionResponse(
                 success=False,
-                error="JSON内容必须是字符串或字典类型"
+                error="JSON content must be a string or dictionary"
             )
         
-        # 从JSON创建文档对象
+        # Create document object from JSON
         try:
             document = MarkdownDocument(**json_data)
         except Exception as e:
             return ConversionResponse(
                 success=False,
-                error=f"JSON数据格式错误: {str(e)}"
+                error=f"JSON data format error: {str(e)}"
             )
         
-        # 设置渲染选项
+        # Set rendering options
         if request.options:
             self.renderer = MarkdownRenderer(request.options)
         
-        # 渲染为Markdown
+        # Render to Markdown
         markdown_result = self.renderer.render(document)
         
         return ConversionResponse(
@@ -469,9 +601,20 @@ class MarkdownConverter:
         )
 
 
-# 便捷函数
+# Convenience functions
 def markdown_to_json(markdown_text: str, options: Optional[ConversionOptions] = None) -> Dict[str, Any]:
-    """Markdown文本转JSON（便捷函数）"""
+    """Convert Markdown text to JSON (convenience function).
+    
+    Args:
+        markdown_text: The Markdown text to convert
+        options: Optional conversion options
+        
+    Returns:
+        Dictionary containing the JSON representation
+        
+    Raises:
+        ValueError: If conversion fails
+    """
     converter = MarkdownConverter()
     request = ConversionRequest(
         source_format="markdown",
@@ -484,11 +627,22 @@ def markdown_to_json(markdown_text: str, options: Optional[ConversionOptions] = 
     if response.success:
         return response.result
     else:
-        raise ValueError(f"转换失败: {response.error}")
+        raise ValueError(f"Conversion failed: {response.error}")
 
 
 def json_to_markdown(json_data: Union[str, Dict[str, Any]], options: Optional[ConversionOptions] = None) -> str:
-    """JSON转Markdown文本（便捷函数）"""
+    """Convert JSON to Markdown text (convenience function).
+    
+    Args:
+        json_data: JSON data as string or dictionary
+        options: Optional conversion options
+        
+    Returns:
+        Markdown text string
+        
+    Raises:
+        ValueError: If conversion fails
+    """
     converter = MarkdownConverter()
     request = ConversionRequest(
         source_format="json",
@@ -501,4 +655,4 @@ def json_to_markdown(json_data: Union[str, Dict[str, Any]], options: Optional[Co
     if response.success:
         return response.result
     else:
-        raise ValueError(f"转换失败: {response.error}")
+        raise ValueError(f"Conversion failed: {response.error}")
