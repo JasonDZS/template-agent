@@ -120,7 +120,7 @@ python main.py list
 
 #### 2. 生成报告
 ```bash
-python main.py generate --template "会议模板.md" --output "我的会议报告"
+python main.py generate --template 产品需求评审会议.md --output report.md --format markdown --knowledge-base workdir/documents 
 ```
 
 #### 3. 测试知识库
