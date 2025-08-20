@@ -74,6 +74,8 @@ class KnowledgeRetrievalTool(BaseTool):
     vector embeddings. It supports multiple document formats and maintains a persistent
     vector database for efficient retrieval.
     
+    Implements singleton pattern to avoid multiple initializations.
+    
     Attributes:
         name (str): Tool identifier name.
         description (str): Tool description for AI agents.
@@ -91,6 +93,10 @@ class KnowledgeRetrievalTool(BaseTool):
     knowledge_base_path: str = "workdir/documents"
     collection_name: str = "documents"
     
+    # Singleton pattern attributes
+    _instance = None
+    _initialized = False
+    
     # Optional fields that will be set during initialization
     client: Optional[Any] = None
     collection: Optional[Any] = None
@@ -98,9 +104,24 @@ class KnowledgeRetrievalTool(BaseTool):
     embedding_function: Optional[Any] = None
     documents: List[Dict[str, Any]] = []
     
+    def __new__(cls, knowledge_base_path: str = "workdir/documents", collection_name: str = "documents"):
+        """
+        Ensure only one instance exists (singleton pattern).
+        
+        Args:
+            knowledge_base_path (str, optional): Path to the document collection directory.
+            collection_name (str, optional): Name for the ChromaDB collection.
+            
+        Returns:
+            KnowledgeRetrievalTool: The singleton instance.
+        """
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
     def __init__(self, knowledge_base_path: str = "workdir/documents", collection_name: str = "documents"):
         """
-        Initialize the KnowledgeRetrievalTool.
+        Initialize the KnowledgeRetrievalTool (only once due to singleton pattern).
         
         Args:
             knowledge_base_path (str, optional): Path to the document collection directory.
@@ -108,6 +129,10 @@ class KnowledgeRetrievalTool(BaseTool):
             collection_name (str, optional): Name for the ChromaDB collection.
                 Defaults to "documents".
         """
+        # Skip initialization if already initialized
+        if self._initialized:
+            return
+            
         super().__init__(knowledge_base_path=knowledge_base_path, collection_name=collection_name)
         self.knowledge_base_path = Path(knowledge_base_path)
         self.collection_name = collection_name
@@ -144,13 +169,13 @@ class KnowledgeRetrievalTool(BaseTool):
         )
         
         # Create embedding function
-        self.embedding_function = OpenAIEmbeddingFunction(
-            self.openai_client, 
-            settings.EMBEDDING_MODEL
-        )
+        self.embedding_function = OpenAIEmbeddingFunction()
         
         # Initialize knowledge base
         self._initialize_knowledge_base()
+        
+        # Mark as initialized
+        self._initialized = True
     
     def _initialize_knowledge_base(self):
         """
@@ -191,7 +216,6 @@ class KnowledgeRetrievalTool(BaseTool):
                     embedding_function=self.embedding_function
                 )
                 logger.info(f"Created new collection: {self.collection_name}")
-                logger.info(self.collection.embedding_function)
             
             # Load documents
             self._load_documents()
