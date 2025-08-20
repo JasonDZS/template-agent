@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LLM Call Logger Module
-
-This module provides logging functionality for all large language model
-interactions, recording inputs, outputs, and metadata for analysis and debugging.
+LLM调用日志记录器
+用于记录所有大模型的输入输出
 """
 
 import json
@@ -18,33 +16,20 @@ from app.logger import logger
 
 
 class LLMCallLogger:
-    """Logger for LLM API calls and responses.
-    
-    This class provides thread-safe logging of all interactions with large
-    language models, including request/response pairs, token counts, and
-    metadata for performance analysis and debugging.
-    
-    Attributes:
-        log_file_path: Path to the JSON log file
-    """
+    """LLM调用日志记录器"""
     
     def __init__(self, log_file_path: str = "workdir/llm_response.json"):
-        """Initialize the LLM call logger.
-        
-        Args:
-            log_file_path: Path to store the log file
-        """
         self.log_file_path = Path(log_file_path)
         self.log_file_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Thread lock for concurrent write safety
+        # 线程锁，确保并发写入安全
         self._lock = Lock()
         
-        # Initialize log file
+        # 初始化日志文件
         self._initialize_log_file()
     
     def _initialize_log_file(self):
-        """Initialize the log file if it doesn't exist."""
+        """初始化日志文件"""
         if not self.log_file_path.exists():
             with open(self.log_file_path, 'w', encoding='utf-8') as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
@@ -54,16 +39,9 @@ class LLMCallLogger:
                      messages: List[Dict[str, str]],
                      response: str,
                      metadata: Optional[Dict[str, Any]] = None):
-        """Log an LLM API call.
-        
-        Args:
-            model: The model name/identifier used
-            messages: List of message dictionaries (request)
-            response: The response text from the model
-            metadata: Optional additional metadata
-        """
+        """记录LLM调用"""
         try:
-            # Create call record
+            # 创建调用记录
             call_record = {
                 "timestamp": datetime.now().isoformat(),
                 "model": model,
@@ -76,68 +54,47 @@ class LLMCallLogger:
                 }
             }
             
-            # Thread-safe file writing
+            # 线程安全地写入文件
             with self._lock:
                 self._append_to_log_file(call_record)
                 
-            logger.debug(
-                f"LLM call logged: {model}, "
-                f"input {call_record['token_count']['input_tokens']} tokens, "
-                f"output {call_record['token_count']['output_tokens']} tokens"
-            )
+            logger.debug(f"LLM调用已记录: {model}, 输入{call_record['token_count']['input_tokens']}tokens, 输出{call_record['token_count']['output_tokens']}tokens")
             
         except Exception as e:
-            logger.error(f"Failed to log LLM call: {e}")
+            logger.error(f"LLM调用记录失败: {e}")
     
     def _append_to_log_file(self, record: Dict[str, Any]):
-        """Append a record to the log file.
-        
-        Args:
-            record: The log record to append
-        """
+        """追加记录到日志文件"""
         try:
-            # Read existing records
+            # 读取现有记录
             if self.log_file_path.exists():
                 with open(self.log_file_path, 'r', encoding='utf-8') as f:
                     existing_records = json.load(f)
             else:
                 existing_records = []
             
-            # Add new record
+            # 添加新记录
             existing_records.append(record)
             
-            # Write back to file
+            # 写回文件
             with open(self.log_file_path, 'w', encoding='utf-8') as f:
                 json.dump(existing_records, f, ensure_ascii=False, indent=2)
                 
         except Exception as e:
-            logger.error(f"Failed to write to LLM log file: {e}")
+            logger.error(f"写入LLM日志文件失败: {e}")
     
     def _estimate_tokens(self, messages: List[Dict[str, str]]) -> int:
-        """Estimate token count for messages.
-        
-        Simple estimation: English ~4 chars per token, Chinese ~1.5 chars per token.
-        
-        Args:
-            messages: List of message dictionaries
-            
-        Returns:
-            Estimated token count
-        """
+        """估算token数量（简单估算：英文按4字符1token，中文按1.5字符1token）"""
         total_chars = 0
         for msg in messages:
             content = msg.get("content", "")
             total_chars += len(content)
         
-        # Simple estimation: average 2.5 characters per token
+        # 简单估算：平均2.5字符1token
         return int(total_chars / 2.5)
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Get call statistics.
-        
-        Returns:
-            Dictionary containing usage statistics
-        """
+        """获取调用统计信息"""
         try:
             if not self.log_file_path.exists():
                 return {
@@ -160,7 +117,7 @@ class LLMCallLogger:
                     "date_range": None
                 }
             
-            # Calculate statistics
+            # 统计信息
             total_calls = len(records)
             total_input_tokens = sum(r.get("token_count", {}).get("input_tokens", 0) for r in records)
             total_output_tokens = sum(r.get("token_count", {}).get("output_tokens", 0) for r in records)
@@ -182,7 +139,7 @@ class LLMCallLogger:
             }
             
         except Exception as e:
-            logger.error(f"Failed to get LLM call statistics: {e}")
+            logger.error(f"获取LLM调用统计失败: {e}")
             return {
                 "total_calls": 0,
                 "total_input_tokens": 0,
@@ -193,24 +150,17 @@ class LLMCallLogger:
             }
     
     def clear_logs(self):
-        """Clear all log records."""
+        """清空日志记录"""
         try:
             with self._lock:
                 with open(self.log_file_path, 'w', encoding='utf-8') as f:
                     json.dump([], f, ensure_ascii=False, indent=2)
-                logger.info("LLM call logs cleared")
+                logger.info("LLM调用日志已清空")
         except Exception as e:
-            logger.error(f"Failed to clear LLM logs: {e}")
+            logger.error(f"清空LLM日志失败: {e}")
     
     def get_recent_calls(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get recent call records.
-        
-        Args:
-            limit: Maximum number of records to return
-            
-        Returns:
-            List of recent call records, sorted by timestamp (newest first)
-        """
+        """获取最近的调用记录"""
         try:
             if not self.log_file_path.exists():
                 return []
@@ -218,24 +168,20 @@ class LLMCallLogger:
             with open(self.log_file_path, 'r', encoding='utf-8') as f:
                 records = json.load(f)
             
-            # Sort by timestamp and return recent records
+            # 按时间戳排序，返回最近的记录
             sorted_records = sorted(records, key=lambda x: x.get("timestamp", ""), reverse=True)
             return sorted_records[:limit]
             
         except Exception as e:
-            logger.error(f"Failed to get recent LLM call records: {e}")
+            logger.error(f"获取最近LLM调用记录失败: {e}")
             return []
 
 
-# Global singleton instance
+# 全局单例实例
 _llm_call_logger = None
 
 def get_llm_logger() -> LLMCallLogger:
-    """Get the LLM call logger singleton instance.
-    
-    Returns:
-        The global LLMCallLogger instance
-    """
+    """获取LLM调用记录器单例"""
     global _llm_call_logger
     if _llm_call_logger is None:
         _llm_call_logger = LLMCallLogger()

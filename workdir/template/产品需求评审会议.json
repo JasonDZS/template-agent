@@ -1,0 +1,209 @@
+{
+  "title": "产品评审会议记录",
+  "metadata": null,
+  "content": [
+    {
+      "type": "heading",
+      "content": "产品评审会议记录",
+      "children": null,
+      "attributes": {
+        "level": 1
+      }
+    },
+    {
+      "type": "list",
+      "content": null,
+      "children": [
+        {
+          "type": "list_item",
+          "content": "**时间**：2025年07月29日 14:00",
+          "children": null,
+          "attributes": null
+        },
+        {
+          "type": "list_item",
+          "content": "**评审内容**：智能鞋垫健康监测 V1.2",
+          "children": null,
+          "attributes": null
+        },
+        {
+          "type": "list_item",
+          "content": "**评审人**：产品、开发、测试、AI 模型组",
+          "children": null,
+          "attributes": null
+        }
+      ],
+      "attributes": {
+        "list_type": "unordered"
+      }
+    },
+    {
+      "type": "horizontal_rule",
+      "content": null,
+      "children": null,
+      "attributes": null
+    },
+    {
+      "type": "heading",
+      "content": "一、PRD 核心内容",
+      "children": null,
+      "attributes": {
+        "level": 2
+      }
+    },
+    {
+      "type": "list",
+      "content": null,
+      "children": [
+        {
+          "type": "list_item",
+          "content": "功能概述：增加异常心率报警，优化数据上传稳定性",
+          "children": null,
+          "attributes": null
+        },
+        {
+          "type": "list_item",
+          "content": "页面调整：设备页、健康分析页细节更新",
+          "children": null,
+          "attributes": null
+        },
+        {
+          "type": "list_item",
+          "content": "数据需求：同步新增心率间歇率指标",
+          "children": null,
+          "attributes": null
+        }
+      ],
+      "attributes": {
+        "list_type": "unordered"
+      }
+    },
+    {
+      "type": "horizontal_rule",
+      "content": null,
+      "children": null,
+      "attributes": null
+    },
+    {
+      "type": "heading",
+      "content": "二、评审反馈",
+      "children": null,
+      "attributes": {
+        "level": 2
+      }
+    },
+    {
+      "type": "heading",
+      "content": "1. 功能可行性",
+      "children": null,
+      "attributes": {
+        "level": 3
+      }
+    },
+    {
+      "type": "list",
+      "content": null,
+      "children": [
+        {
+          "type": "list_item",
+          "content": "✅ 报警模块已有基础逻辑，仅需优化策略逻辑（AI 组认领）",
+          "children": null,
+          "attributes": null
+        },
+        {
+          "type": "list_item",
+          "content": "⚠️ 数据上传需优化稳定性，建议采用断点续传（开发组评估）",
+          "children": null,
+          "attributes": null
+        }
+      ],
+      "attributes": {
+        "list_type": "unordered"
+      }
+    },
+    {
+      "type": "heading",
+      "content": "2. UI & 交互建议",
+      "children": null,
+      "attributes": {
+        "level": 3
+      }
+    },
+    {
+      "type": "list",
+      "content": null,
+      "children": [
+        {
+          "type": "list_item",
+          "content": "建议将异常提示从弹窗改为卡片展示（体验更柔和）",
+          "children": null,
+          "attributes": null
+        },
+        {
+          "type": "list_item",
+          "content": "颜色盲用户友好性需评估（改用文字提示为主）",
+          "children": null,
+          "attributes": null
+        }
+      ],
+      "attributes": {
+        "list_type": "unordered"
+      }
+    },
+    {
+      "type": "horizontal_rule",
+      "content": null,
+      "children": null,
+      "attributes": null
+    },
+    {
+      "type": "heading",
+      "content": "三、改进建议与任务拆解",
+      "children": null,
+      "attributes": {
+        "level": 2
+      }
+    },
+    {
+      "type": "paragraph",
+      "content": "| 项目 | 负责人 | 完成时间 | |------|--------|----------| | 优化上传逻辑 | 开发组 | 8/5 | | 调整心率策略模型 | AI 组 | 8/7 | | UI 交互修改 | 设计组 | 8/6 |",
+      "children": null,
+      "attributes": null
+    },
+    {
+      "type": "horizontal_rule",
+      "content": null,
+      "children": null,
+      "attributes": null
+    },
+    {
+      "type": "heading",
+      "content": "四、结论",
+      "children": null,
+      "attributes": {
+        "level": 2
+      }
+    },
+    {
+      "type": "list",
+      "content": null,
+      "children": [
+        {
+          "type": "list_item",
+          "content": "通过评审，需按反馈修改后发布版本 V1.2",
+          "children": null,
+          "attributes": null
+        },
+        {
+          "type": "list_item",
+          "content": "下次评审安排：8/8 版本前回归验收",
+          "children": null,
+          "attributes": null
+        }
+      ],
+      "attributes": {
+        "list_type": "unordered"
+      }
+    }
+  ]
+}

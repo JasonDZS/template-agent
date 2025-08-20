@@ -25,7 +25,7 @@ class Settings(BaseModel):
     _instance: ClassVar[Optional["Settings"]] = None
 
     workdir: str = Field(default="workdir")
-    template: str = Field(default="workdir/template/产品需求评审会议.md")
+    template: str = Field(default="workdir/template/企业信贷评估模版.md")
 
     # OpenAI settings
     OPENAI_API_KEY: str = Field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
@@ -65,8 +65,8 @@ class Settings(BaseModel):
     MARKDOWN_OUTPUT_FORMAT: str = Field(
         default_factory=lambda: os.getenv("MARKDOWN_OUTPUT_FORMAT", "json")
     )  # Options: "json", "yaml", "xml"
-    distance: float = Field(default = 1.5, description = "Distance threshold for embedding similarity")
-    top_k: int = Field(default = 5, description = "Number of top results to return from embedding search")
+    distance: float = Field(default = 1, description = "Distance threshold for embedding similarity")
+    top_k: int = Field(default = 3, description = "Number of top results to return from embedding search")
 
     parallel_sections: bool = Field(default = False, description = "Whether to process sections in parallel")
     max_concurrent: int = Field(
