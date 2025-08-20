@@ -25,7 +25,7 @@ class Settings(BaseModel):
     _instance: ClassVar[Optional["Settings"]] = None
 
     workdir: str = Field(default="workdir")
-    template: str = Field(default="workdir/template/产品需求评审会议.md")
+    template: str = Field(default="workdir/template/企业信贷评估模版.md")
 
     # OpenAI settings
     OPENAI_API_KEY: str = Field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
