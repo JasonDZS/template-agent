@@ -2,13 +2,9 @@
 # -*- coding: utf-8 -*-
 """
 Report Generator Agent Single Prompt Templates
-
-This module contains prompt templates for the single-agent report generator
-that processes sections sequentially to create structured reports. It includes
-system prompts, step-by-step guidance, and content generation instructions.
 """
 
-# System prompt for the single-agent report generator
+# System prompt
 SYSTEM_PROMPT = """You are a professional report generation agent. Your tasks are:
 
 1. Fill in the content of each part step by step according to the provided template structure
@@ -23,7 +19,7 @@ Tool Usage Guide:
 
 Always maintain professionalism and accuracy to ensure the generated report content is valuable and easy to understand."""
 
-# Next step prompt for guiding the sequential report generation process
+# Next step prompt
 NEXT_STEP_PROMPT = """Please analyze the current report part that needs to be completed, then:
 
 1. If more information is needed, use the knowledge_retrieval tool to retrieve relevant content
@@ -34,7 +30,7 @@ NEXT_STEP_PROMPT = """Please analyze the current report part that needs to be co
 Current progress: {progress}
 Pending sections: {pending_sections}"""
 
-# Content generation prompt for creating section-specific content
+# Content generation prompt
 CONTENT_GENERATION_PROMPT = """Please generate content for the report section based on the following information:
 
 Report Title: {report_title}

@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Structured Report Generator Agent
-
-This module contains the single-agent implementation for generating structured reports
-based on templates. It processes sections sequentially and generates comprehensive
-reports with knowledge retrieval capabilities.
+结构化报告生成Agent
 """
 
 import json
@@ -21,90 +17,44 @@ from app.prompt import report_single as prompts
 
 
 class ReportGeneratorAgentSingle(BaseAgent):
-    """
-    Structured Report Generator Agent - Single Agent Implementation
-    
-    This agent generates structured reports based on templates using a single-agent
-    approach. It processes sections sequentially, retrieves relevant knowledge,
-    and produces comprehensive reports in both JSON and Markdown formats.
-    
-    Attributes:
-        template_path (Optional[Path]): Path to the report template file
-        output_path (Optional[Path]): Path where generated reports will be saved
-        knowledge_base_path (str): Path to the knowledge base for content retrieval
-        knowledge_tool (KnowledgeRetrievalTool): Tool for retrieving relevant information
-        converter (MarkdownConverter): Tool for format conversion between JSON and Markdown
-        template_structure (Optional[Dict]): Parsed template structure
-        report_content (Dict[str, Any]): Current report content being generated
-        current_section (Optional[Dict]): Currently processing section
-        completed_sections (Set[int]): Set of completed section IDs
-        
-    Example:
-        >>> agent = ReportGeneratorAgentSingle(
-        ...     template_path="templates/report.md",
-        ...     knowledge_base_path="data/documents",
-        ...     output_path="output/report.md"
-        ... )
-        >>> result = await agent.run_with_template("template.md", "output.md")
-    """
+    """结构化报告生成Agent，基于单智能体实现"""
 
     def __init__(self,
                  template_path: Optional[str] = None,
                  knowledge_base_path: str = "workdir/documents",
                  output_path: Optional[str] = None,
                  **kwargs):
-        """
-        Initialize the Report Generator Agent.
-        
-        Args:
-            template_path (Optional[str]): Path to the report template file
-            knowledge_base_path (str): Path to the knowledge base directory
-            output_path (Optional[str]): Path where the generated report will be saved
-            **kwargs: Additional arguments passed to the base agent
-        """
         super().__init__(**kwargs)
 
         self.template_path = Path(template_path) if template_path else None
         self.output_path = Path(output_path) if output_path else None
         self.knowledge_base_path = knowledge_base_path
 
-        # Initialize tools
+        # 初始化工具
         self.knowledge_tool = KnowledgeRetrievalTool(knowledge_base_path)
         self.converter = MarkdownConverter()
 
-        # Report template and content structures
+        # 报告模板和内容
         self.template_structure = None
         self.report_content = {}
         self.current_section = None
         self.completed_sections = set()
 
-        # Set agent default parameters
+        # 设置Agent默认参数
         if not self.name:
             self.name = "report_generator"
         if not self.description:
-            self.description = "Intelligent agent for generating structured reports"
+            self.description = "生成结构化报告的智能Agent"
 
-        # Set system prompts
+        # 设置系统提示
         self.system_prompt = prompts.SYSTEM_PROMPT
 
         self.next_step_prompt = prompts.NEXT_STEP_PROMPT
 
     async def initialize_from_template(self, template_content: str):
-        """
-        Initialize the agent from template content.
-        
-        This method parses the template content (either Markdown or JSON format)
-        and sets up the report structure accordingly.
-        
-        Args:
-            template_content (str): The template content in Markdown or JSON format
-            
-        Raises:
-            ValueError: If template conversion fails
-            Exception: If template initialization fails
-        """
+        """从模板内容初始化Agent"""
         try:
-            # If it's a Markdown template, convert to JSON structure
+            # 如果是Markdown模板，转换为JSON结构
             if template_content.strip().startswith('#'):
                 conversion_request = ConversionRequest(
                     source_format = "markdown",
@@ -116,34 +66,29 @@ class ReportGeneratorAgentSingle(BaseAgent):
                 if conversion_result.success:
                     self.template_structure = conversion_result.result
                 else:
-                    raise ValueError(f"Template conversion failed: {conversion_result.error}")
+                    raise ValueError(f"模板转换失败: {conversion_result.error}")
             else:
-                # Assume it's JSON format
+                # 假设是JSON格式
                 self.template_structure = json.loads(template_content)
 
-            # Initialize report content structure
+            # 初始化报告内容结构
             self._initialize_report_structure()
 
-            logger.info(f"Template initialization completed, {len(self.template_structure.get('content', []))} sections found")
+            logger.info(f"模板初始化完成，共 {len(self.template_structure.get('content', []))} 个部分")
 
         except Exception as e:
-            logger.error(f"Template initialization failed: {e}")
+            logger.error(f"模板初始化失败: {e}")
             raise
 
     def _initialize_report_structure(self):
-        """
-        Initialize the report content structure.
-        
-        This method creates the basic report structure and prepares
-        empty content sections for each heading in the template.
-        """
+        """初始化报告内容结构"""
         self.report_content = {
-            "title": self.template_structure.get("title", "Report"),
+            "title": self.template_structure.get("title", "报告"),
             "metadata": self.template_structure.get("metadata", {}),
             "content": []
         }
 
-        # Create empty content structure for each template section
+        # 为每个模板部分创建空的内容结构
         for element in self.template_structure.get("content", []):
             if element.get("type") == "heading":
                 section = {
@@ -157,52 +102,41 @@ class ReportGeneratorAgentSingle(BaseAgent):
                 self.report_content["content"].append(section)
 
     async def step(self) -> str:
-        """
-        Execute a single step operation.
-        
-        This method processes one section at a time, generating content
-        and managing the overall report generation workflow.
-        
-        Returns:
-            str: Status message describing the current step result
-            
-        Raises:
-            Exception: If step execution fails
-        """
+        """执行单步操作"""
         try:
-            # Check if there are pending sections
+            # 检查是否有待处理的部分
             pending_sections = [
                 section for section in self.report_content["content"]
                 if not section.get("completed", False)
             ]
 
             if not pending_sections:
-                # All sections completed, save report and terminate
+                # 所有部分已完成，保存报告并终止
                 await self._save_report()
-                logger.info("All sections completed, saving report")
+                logger.info("所有部分已完成，保存报告")
                 self.state = AgentState.FINISHED
-                return "Report generation completed"
+                return "报告生成完成"
 
-            # Select the next section to process
+            # 选择下一个要处理的部分
             current_section = pending_sections[0]
             self.current_section = current_section
 
-            section_title = current_section.get("content", f"Section {current_section['id'] + 1}")
-            logger.info(f"Starting section processing: {section_title}")
+            section_title = current_section.get("content", f"第{current_section['id'] + 1}部分")
+            logger.info(f"开始处理部分: {section_title}")
 
-            # Build current step prompt
+            # 构建当前步骤的提示
             progress_info = f"{len(self.completed_sections)}/{len(self.report_content['content'])}"
-            pending_info = [s.get("content", f"Section {s['id'] + 1}") for s in pending_sections[:3]]
+            pending_info = [s.get("content", f"部分{s['id'] + 1}") for s in pending_sections[:3]]
 
             step_prompt = self.next_step_prompt.format(
                 progress = progress_info,
                 pending_sections = ", ".join(pending_info)
             )
 
-            # Update system message
+            # 更新系统消息
             self.update_memory("system", f"{self.system_prompt}\n\n{step_prompt}")
 
-            # Generate content for current section
+            # 为当前部分生成内容
             content_result = await self._generate_section_content(current_section)
 
             if content_result:
@@ -210,39 +144,24 @@ class ReportGeneratorAgentSingle(BaseAgent):
                 current_section["completed"] = True
                 self.completed_sections.add(current_section["id"])
 
-                return f"Completed section '{section_title}': {content_result[:100]}..."
+                return f"完成部分 '{section_title}': {content_result[:100]}..."
             else:
-                return f"Processing section '{section_title}'"
+                return f"正在处理部分 '{section_title}'"
 
         except Exception as e:
-            logger.error(f"Step execution failed: {e}")
-            return f"Execution failed: {str(e)}"
+            logger.error(f"步骤执行失败: {e}")
+            return f"执行失败: {str(e)}"
 
     async def _generate_section_content(self, section: Dict[str, Any]) -> str:
-        """
-        Generate content for the specified section.
-        
-        This method retrieves relevant knowledge from the knowledge base
-        and uses LLM to generate appropriate content for the section.
-        
-        Args:
-            section (Dict[str, Any]): Section information dictionary containing
-                title, level, and other metadata
-                
-        Returns:
-            str: Generated content for the section
-            
-        Raises:
-            Exception: If content generation fails
-        """
+        """为指定部分生成内容"""
         section_title = section.get("content", "")
         section_level = section.get("level", 1)
 
-        # Build retrieval query
+        # 构建检索查询
         query = f"{section_title} {self.report_content.get('title', '')}"
 
         try:
-            # Retrieve relevant information from knowledge base
+            # 从知识库检索相关信息
             retrieval_result = await self.knowledge_tool.execute(
                 query = query,
                 top_k = 3,
@@ -250,12 +169,12 @@ class ReportGeneratorAgentSingle(BaseAgent):
             )
 
             if retrieval_result.error:
-                logger.warning(f"Knowledge base retrieval failed: {retrieval_result.error}")
-                knowledge_context = "No relevant knowledge base information retrieved"
+                logger.warning(f"知识库检索失败: {retrieval_result.error}")
+                knowledge_context = "未获取到相关知识库信息"
             else:
                 knowledge_context = retrieval_result.output
 
-            # Build content generation prompt
+            # 构建内容生成提示
             content_prompt = prompts.CONTENT_GENERATION_PROMPT.format(
                 report_title=self.report_content.get('title', ''),
                 section_title=section_title,
@@ -265,7 +184,7 @@ class ReportGeneratorAgentSingle(BaseAgent):
 
             self.update_memory("user", content_prompt)
 
-            # Call LLM to generate content
+            # 调用LLM生成内容
             response = await self.llm.ask(self.memory.messages)
 
             if response:
@@ -273,34 +192,26 @@ class ReportGeneratorAgentSingle(BaseAgent):
                 self.update_memory("assistant", generated_content)
                 return generated_content
             else:
-                logger.warning(f"LLM returned no valid content")
-                return f"[To be completed] Content related to {section_title}"
+                logger.warning(f"LLM未返回有效内容")
+                return f"[待完善] {section_title}相关内容"
 
         except Exception as e:
-            logger.error(f"Content generation failed: {e}")
-            return f"[Generation failed] {section_title}: {str(e)}"
+            logger.error(f"内容生成失败: {e}")
+            return f"[生成失败] {section_title}: {str(e)}"
 
     async def _save_report(self):
-        """
-        Save the generated report to files.
-        
-        This method builds the complete report structure and saves it
-        in both JSON and Markdown formats to the specified output path.
-        
-        Raises:
-            Exception: If report saving fails
-        """
+        """保存生成的报告"""
         try:
-            # Build complete report structure
+            # 构建完整的报告结构
             report_document = {
                 "title": self.report_content["title"],
                 "metadata": self.report_content["metadata"],
                 "content": []
             }
 
-            # Add generated content
+            # 添加生成的内容
             for section in self.report_content["content"]:
-                # Add heading
+                # 添加标题
                 report_document["content"].append({
                     "type": "heading",
                     "level": section["level"],
@@ -308,7 +219,7 @@ class ReportGeneratorAgentSingle(BaseAgent):
                     "attributes": {"level": section["level"]}
                 })
 
-                # Add generated content as paragraph
+                # 添加生成的内容作为段落
                 if section.get("generated_content"):
                     report_document["content"].append({
                         "type": "paragraph",
@@ -316,13 +227,13 @@ class ReportGeneratorAgentSingle(BaseAgent):
                         "attributes": {}
                     })
 
-            # Save JSON format
+            # 保存JSON格式
             if self.output_path:
                 json_path = self.output_path.with_suffix('.json')
                 with open(json_path, 'w', encoding = 'utf-8') as f:
                     json.dump(report_document, f, ensure_ascii = False, indent = 2)
 
-                # Convert and save Markdown format
+                # 转换并保存Markdown格式
                 conversion_request = ConversionRequest(
                     source_format = "json",
                     target_format = "markdown",
@@ -335,30 +246,17 @@ class ReportGeneratorAgentSingle(BaseAgent):
                     with open(md_path, 'w', encoding = 'utf-8') as f:
                         f.write(conversion_result.result)
 
-                    logger.info(f"Report saved: {json_path}, {md_path}")
+                    logger.info(f"报告已保存: {json_path}, {md_path}")
                 else:
-                    logger.warning(f"Markdown conversion failed: {conversion_result.error}")
+                    logger.warning(f"Markdown转换失败: {conversion_result.error}")
             else:
-                logger.info("No output path specified, report not saved to file")
+                logger.info("未指定输出路径，报告未保存到文件")
 
         except Exception as e:
-            logger.error(f"Report saving failed: {e}")
+            logger.error(f"报告保存失败: {e}")
 
     def get_progress(self) -> Dict[str, Any]:
-        """
-        Get report generation progress information.
-        
-        Returns comprehensive progress information including section completion
-        status, progress percentage, and current processing section.
-        
-        Returns:
-            Dict[str, Any]: Progress information dictionary containing:
-                - total_sections: Total number of sections in the report
-                - completed_sections: Number of completed sections
-                - progress_percentage: Progress as a percentage (0-100)
-                - current_section: Title of the currently processing section
-                - remaining_sections: Number of remaining sections to process
-        """
+        """获取生成进度"""
         total_sections = len(self.report_content.get("content", []))
         completed_sections = len(self.completed_sections)
 
@@ -371,36 +269,21 @@ class ReportGeneratorAgentSingle(BaseAgent):
         }
 
     async def run_with_template(self, template_path: str, output_path: Optional[str] = None) -> str:
-        """
-        Run the agent with a specified template.
-        
-        This is a convenience method that loads a template file,
-        initializes the agent, and runs the report generation process.
-        
-        Args:
-            template_path (str): Path to the template file to use
-            output_path (Optional[str]): Path where the generated report will be saved
-            
-        Returns:
-            str: Result message from the agent execution
-            
-        Raises:
-            Exception: If template running fails
-        """
+        """使用指定模板运行Agent"""
         try:
-            # Load template
+            # 加载模板
             template_content = Path(template_path).read_text(encoding = 'utf-8')
             await self.initialize_from_template(template_content)
 
-            # Set output path
+            # 设置输出路径
             if output_path:
                 self.output_path = Path(output_path)
 
-            # Run agent
+            # 运行Agent
             result = await self.run()
 
             return result
 
         except Exception as e:
-            logger.error(f"Template running failed: {e}")
+            logger.error(f"模板运行失败: {e}")
             raise

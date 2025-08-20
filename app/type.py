@@ -4,7 +4,7 @@ from enum import Enum
 
 
 class ElementType(str, Enum):
-    """Enumeration of Markdown element types."""
+    """Markdown元素类型枚举"""
     HEADING = "heading"
     PARAGRAPH = "paragraph"
     CODE_BLOCK = "code_block"
@@ -26,13 +26,13 @@ class ElementType(str, Enum):
 
 
 class ListType(str, Enum):
-    """Enumeration of list types."""
+    """列表类型枚举"""
     ORDERED = "ordered"
     UNORDERED = "unordered"
 
 
 class TableAlignment(str, Enum):
-    """Enumeration of table alignment options."""
+    """表格对齐方式枚举"""
     LEFT = "left"
     CENTER = "center"
     RIGHT = "right"
@@ -40,37 +40,21 @@ class TableAlignment(str, Enum):
 
 
 class MarkdownElement(BaseModel):
-    """Base model for Markdown elements.
-    
-    This is the foundational class for all Markdown elements, providing
-    common attributes and structure for element hierarchy.
-    
-    Attributes:
-        type: The type of the Markdown element
-        content: Optional text content of the element
-        children: Optional list of child elements for nested structures
-        attributes: Optional dictionary of element-specific attributes
-    """
-    type: ElementType = Field(..., description="Element type")
-    content: Optional[str] = Field(None, description="Text content")
-    children: Optional[List['MarkdownElement']] = Field(None, description="List of child elements")
-    attributes: Optional[Dict[str, Any]] = Field(None, description="Element attributes")
+    """Markdown元素基础模型"""
+    type: ElementType = Field(..., description="元素类型")
+    content: Optional[str] = Field(None, description="文本内容")
+    children: Optional[List['MarkdownElement']] = Field(None, description="子元素列表")
+    attributes: Optional[Dict[str, Any]] = Field(None, description="元素属性")
     
     class Config:
-        # Allow recursive model
+        # 允许递归模型
         from_attributes = True
 
 
 class HeadingElement(MarkdownElement):
-    """Markdown heading element.
-    
-    Represents heading elements (h1-h6) with a specific level.
-    
-    Attributes:
-        level: Heading level from 1 to 6
-    """
+    """标题元素"""
     type: Literal[ElementType.HEADING] = Field(ElementType.HEADING)
-    level: int = Field(..., ge=1, le=6, description="Heading level (1-6)")
+    level: int = Field(..., ge=1, le=6, description="标题级别 (1-6)")
     
     def __init__(self, **data):
         super().__init__(**data)
@@ -80,15 +64,9 @@ class HeadingElement(MarkdownElement):
 
 
 class CodeBlockElement(MarkdownElement):
-    """Code block element.
-    
-    Represents fenced code blocks with optional language specification.
-    
-    Attributes:
-        language: Optional programming language for syntax highlighting
-    """
+    """代码块元素"""
     type: Literal[ElementType.CODE_BLOCK] = Field(ElementType.CODE_BLOCK)
-    language: Optional[str] = Field(None, description="Programming language")
+    language: Optional[str] = Field(None, description="编程语言")
     
     def __init__(self, **data):
         super().__init__(**data)
@@ -99,17 +77,10 @@ class CodeBlockElement(MarkdownElement):
 
 
 class ListElement(MarkdownElement):
-    """List element.
-    
-    Represents both ordered and unordered lists.
-    
-    Attributes:
-        list_type: Type of list (ordered or unordered)
-        start: Starting number for ordered lists
-    """
+    """列表元素"""
     type: Literal[ElementType.LIST] = Field(ElementType.LIST)
-    list_type: ListType = Field(..., description="List type")
-    start: Optional[int] = Field(None, description="Starting number for ordered lists")
+    list_type: ListType = Field(..., description="列表类型")
+    start: Optional[int] = Field(None, description="有序列表起始数字")
     
     def __init__(self, **data):
         super().__init__(**data)
@@ -121,17 +92,10 @@ class ListElement(MarkdownElement):
 
 
 class LinkElement(MarkdownElement):
-    """Link element.
-    
-    Represents hyperlinks with URL and optional title.
-    
-    Attributes:
-        url: The target URL
-        title: Optional link title
-    """
+    """链接元素"""
     type: Literal[ElementType.LINK] = Field(ElementType.LINK)
-    url: str = Field(..., description="Link URL")
-    title: Optional[str] = Field(None, description="Link title")
+    url: str = Field(..., description="链接URL")
+    title: Optional[str] = Field(None, description="链接标题")
     
     def __init__(self, **data):
         super().__init__(**data)
@@ -143,19 +107,11 @@ class LinkElement(MarkdownElement):
 
 
 class ImageElement(MarkdownElement):
-    """Image element.
-    
-    Represents embedded images with source URL and optional metadata.
-    
-    Attributes:
-        src: Image source URL
-        alt: Alternative text for accessibility
-        title: Optional image title
-    """
+    """图片元素"""
     type: Literal[ElementType.IMAGE] = Field(ElementType.IMAGE)
-    src: str = Field(..., description="Image source URL")
-    alt: Optional[str] = Field(None, description="Alternative text")
-    title: Optional[str] = Field(None, description="Image title")
+    src: str = Field(..., description="图片源URL")
+    alt: Optional[str] = Field(None, description="替代文本")
+    title: Optional[str] = Field(None, description="图片标题")
     
     def __init__(self, **data):
         super().__init__(**data)
@@ -169,18 +125,12 @@ class ImageElement(MarkdownElement):
 
 
 class TableElement(MarkdownElement):
-    """Table element.
-    
-    Represents Markdown tables with headers and column alignments.
-    
-    Attributes:
-        headers: List of table header labels
-        alignments: List of column alignment specifications
-    """
+    """表格元素（精简版：直接 rows）"""
     type: Literal[ElementType.TABLE] = Field(ElementType.TABLE)
-    headers: List[str] = Field(default_factory=list, description="Table headers")
-    alignments: List[TableAlignment] = Field(default_factory=list, description="Column alignment options")
-    
+    headers: List[str] = Field(default_factory=list, description="表头")
+    alignments: List[TableAlignment] = Field(default_factory=list, description="列对齐方式")
+    rows: List[List[str]] = Field(default_factory=list, description="数据行 (二维数组)")
+
     def __init__(self, **data):
         super().__init__(**data)
         if self.attributes is None:
@@ -188,71 +138,43 @@ class TableElement(MarkdownElement):
         if self.headers:
             self.attributes["headers"] = self.headers
         if self.alignments:
-            self.attributes["alignments"] = [align.value for align in self.alignments]
+            self.attributes["alignments"] = [a.value for a in self.alignments]
+
 
 
 class MarkdownDocument(BaseModel):
-    """Markdown document model.
-    
-    Represents a complete Markdown document with optional metadata.
-    
-    Attributes:
-        title: Optional document title
-        metadata: Optional document metadata dictionary
-        content: List of document content elements
-    """
-    title: Optional[str] = Field(None, description="Document title")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Document metadata")
-    content: List[MarkdownElement] = Field(default_factory=list, description="Document content element list")
+    """Markdown文档模型"""
+    title: Optional[str] = Field(None, description="文档标题")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="文档元数据")
+    content: List[MarkdownElement] = Field(default_factory=list, description="文档内容元素列表")
     
     class Config:
         from_attributes = True
 
 
 class ConversionOptions(BaseModel):
-    """Configuration options for conversion operations.
-    
-    Attributes:
-        preserve_html: Whether to preserve HTML tags during conversion
-        include_metadata: Whether to include metadata in the output
-        flatten_structure: Whether to flatten the hierarchical structure
-        custom_renderers: Optional custom renderer configurations
-    """
-    preserve_html: bool = Field(True, description="Whether to preserve HTML tags")
-    include_metadata: bool = Field(True, description="Whether to include metadata")
-    flatten_structure: bool = Field(False, description="Whether to flatten structure")
-    custom_renderers: Optional[Dict[str, str]] = Field(None, description="Custom renderers")
+    """转换选项配置"""
+    preserve_html: bool = Field(True, description="是否保留HTML标签")
+    include_metadata: bool = Field(True, description="是否包含元数据")
+    flatten_structure: bool = Field(False, description="是否扁平化结构")
+    custom_renderers: Optional[Dict[str, str]] = Field(None, description="自定义渲染器")
 
 
 class ConversionRequest(BaseModel):
-    """Request model for format conversion operations.
-    
-    Attributes:
-        source_format: Source format identifier (markdown/json)
-        target_format: Target format identifier (json/markdown)
-        content: Content to be converted
-        options: Optional conversion configuration
-    """
-    source_format: str = Field(..., description="Source format (markdown/json)")
-    target_format: str = Field(..., description="Target format (json/markdown)")
-    content: Union[str, Dict[str, Any]] = Field(..., description="Content to convert")
-    options: Optional[ConversionOptions] = Field(None, description="Conversion options")
+    """转换请求模型"""
+    source_format: str = Field(..., description="源格式 (markdown/json)")
+    target_format: str = Field(..., description="目标格式 (json/markdown)")
+    content: Union[str, Dict[str, Any]] = Field(..., description="待转换内容")
+    options: Optional[ConversionOptions] = Field(None, description="转换选项")
 
 
 class ConversionResponse(BaseModel):
-    """Response model for conversion operations.
-    
-    Attributes:
-        success: Whether the conversion was successful
-        result: The converted content (if successful)
-        error: Error message (if conversion failed)
-        metadata: Optional conversion metadata
-    """
-    success: bool = Field(..., description="Whether conversion was successful")
-    result: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Conversion result")
-    error: Optional[str] = Field(None, description="Error message")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Conversion metadata")
+    """转换响应模型"""
+    success: bool = Field(..., description="转换是否成功")
+    result: Optional[Union[str, Dict[str, Any]]] = Field(None, description="转换结果")
+    error: Optional[str] = Field(None, description="错误信息")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="转换元数据")
 
 
-# Update recursive model references
+# 更新递归模型引用
 MarkdownElement.model_rebuild()

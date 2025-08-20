@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Knowledge Base Retrieval Tool - Using ChromaDB and OpenAI Compatible API.
-
-This module provides a knowledge retrieval tool that uses ChromaDB for vector storage
-and OpenAI Compatible API for text embeddings to perform semantic search across
-document collections.
+知识库检索工具 - 使用ChromaDB和OpenAI Compatible API
 """
 
 import os
@@ -25,16 +21,7 @@ from ..config import settings
 
 
 class OpenAIEmbeddingFunction(EmbeddingFunction):
-    """
-    Embedding function using OpenAI Compatible API.
-    
-    This class implements ChromaDB's EmbeddingFunction interface to generate
-    text embeddings using OpenAI Compatible API endpoints.
-    
-    Attributes:
-        client: OpenAI client instance for API calls.
-        model: The embedding model to use.
-    """
+    """使用OpenAI Compatible API的embedding函数"""
     
     client = OpenAI(
         api_key=settings.llm_settings.api_key,
@@ -43,15 +30,7 @@ class OpenAIEmbeddingFunction(EmbeddingFunction):
     model = settings.EMBEDDING_MODEL
     
     def __call__(self, input: Documents) -> Embeddings:
-        """
-        Generate text embedding vectors.
-        
-        Args:
-            input (Documents): List of text documents to embed.
-            
-        Returns:
-            Embeddings: List of embedding vectors for the input documents.
-        """
+        """生成文本嵌入向量"""
         try:
             response = self.client.embeddings.create(
                 model=self.model,
@@ -61,33 +40,16 @@ class OpenAIEmbeddingFunction(EmbeddingFunction):
             logger.info(f"Embedding Shape: {len(response.data[0].embedding)}")
             return [embedding.embedding for embedding in response.data]
         except Exception as e:
-            logger.error(f"Failed to generate embedding vectors: {e}")
-            # Return zero vectors as fallback
+            logger.error(f"生成嵌入向量失败: {e}")
+            # 返回零向量作为fallback
             return [[0.0] * settings.EMBEDDING_DIM for _ in input]
 
 
 class KnowledgeRetrievalTool(BaseTool):
-    """
-    Knowledge base retrieval tool based on ChromaDB and OpenAI Compatible API vectorized search.
-    
-    This tool provides semantic search capabilities over a document collection using
-    vector embeddings. It supports multiple document formats and maintains a persistent
-    vector database for efficient retrieval.
-    
-    Attributes:
-        name (str): Tool identifier name.
-        description (str): Tool description for AI agents.
-        knowledge_base_path (str): Path to the document collection.
-        collection_name (str): Name of the ChromaDB collection.
-        client: ChromaDB client instance.
-        collection: ChromaDB collection instance.
-        openai_client: OpenAI client for embeddings.
-        embedding_function: Function to generate embeddings.
-        documents (List[Dict[str, Any]]): Loaded document metadata.
-    """
+    """知识库检索工具，基于ChromaDB和OpenAI Compatible API的向量化检索"""
     
     name: str = "knowledge_retrieval"
-    description: str = "Retrieve relevant documents and information from knowledge base"
+    description: str = "从知识库中检索相关文档和信息"
     knowledge_base_path: str = "workdir/documents"
     collection_name: str = "documents"
     
@@ -99,15 +61,6 @@ class KnowledgeRetrievalTool(BaseTool):
     documents: List[Dict[str, Any]] = []
     
     def __init__(self, knowledge_base_path: str = "workdir/documents", collection_name: str = "documents"):
-        """
-        Initialize the KnowledgeRetrievalTool.
-        
-        Args:
-            knowledge_base_path (str, optional): Path to the document collection directory.
-                Defaults to "workdir/documents".
-            collection_name (str, optional): Name for the ChromaDB collection.
-                Defaults to "documents".
-        """
         super().__init__(knowledge_base_path=knowledge_base_path, collection_name=collection_name)
         self.knowledge_base_path = Path(knowledge_base_path)
         self.collection_name = collection_name
@@ -121,51 +74,43 @@ class KnowledgeRetrievalTool(BaseTool):
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Text query for retrieval"
+                    "description": "检索查询的文本"
                 },
                 "top_k": {
                     "type": "integer",
-                    "description": "Number of most relevant documents to return",
+                    "description": "返回最相关的文档数量",
                     "default": 3
                 },
                 "threshold": {
                     "type": "number",
-                    "description": "Similarity threshold (between 0-1)",
+                    "description": "相似度阈值（0-1之间）",
                     "default": 0.3
                 }
             },
             "required": ["query"]
         }
         
-        # Initialize OpenAI client
+        # 初始化OpenAI客户端
         self.openai_client = OpenAI(
             api_key=settings.llm_settings.api_key,
             base_url=settings.llm_settings.base_url
         )
         
-        # Create embedding function
+        # 创建embedding函数
         self.embedding_function = OpenAIEmbeddingFunction(
             self.openai_client, 
             settings.EMBEDDING_MODEL
         )
         
-        # Initialize knowledge base
+        # 初始化知识库
         self._initialize_knowledge_base()
     
     def _initialize_knowledge_base(self):
-        """
-        Initialize the knowledge base.
-        
-        This method sets up the ChromaDB client, creates or loads the document collection,
-        loads documents from the file system, and builds the vector index.
-        
-        Raises:
-            Exception: If knowledge base initialization fails.
-        """
+        """初始化知识库"""
         try:
-            logger.info(f"Initializing knowledge base, path: {self.knowledge_base_path}")
+            logger.info(f"初始化知识库，路径: {self.knowledge_base_path}")
             
-            # Initialize ChromaDB client
+            # 初始化ChromaDB客户端
             chroma_db_path = Path("workdir") / "chroma_db"
             chroma_db_path.mkdir(parents=True, exist_ok=True)
             
@@ -177,57 +122,51 @@ class KnowledgeRetrievalTool(BaseTool):
                 )
             )
             
-            # Get or create collection
+            # 获取或创建集合
             try:
                 self.collection = self.client.get_collection(
                     name=self.collection_name,
                     embedding_function=self.embedding_function
                 )
-                logger.info(f"Loaded existing collection: {self.collection_name}")
+                logger.info(f"加载已存在的集合: {self.collection_name}")
             except Exception:
                 self.collection = self.client.create_collection(
                     name=self.collection_name,
-                    metadata={"description": "Document knowledge base"},
+                    metadata={"description": "文档知识库"},
                     embedding_function=self.embedding_function
                 )
-                logger.info(f"Created new collection: {self.collection_name}")
-                logger.info(self.collection.embedding_function)
+                logger.info(f"创建新集合: {self.collection_name}")
             
-            # Load documents
+            # 加载文档
             self._load_documents()
             
-            # Build vector index
+            # 构建向量索引
             if self.documents:
                 self._build_index()
-                logger.info(f"Knowledge base initialization completed, loaded {len(self.documents)} documents")
+                logger.info(f"知识库初始化完成，共加载 {len(self.documents)} 个文档")
             else:
-                logger.warning("No documents found")
+                logger.warning("未找到任何文档")
                 
         except Exception as e:
-            logger.error(f"Knowledge base initialization failed: {e}")
+            logger.error(f"知识库初始化失败: {e}")
             raise
     
     def _load_documents(self):
-        """
-        Load documents from the document folder.
-        
-        This method scans the knowledge base directory for supported file formats
-        and loads their content into memory for indexing.
-        """
+        """从文档文件夹加载文档"""
         self.documents = []
         
         if not self.knowledge_base_path.exists():
-            logger.warning(f"Knowledge base path does not exist: {self.knowledge_base_path}")
+            logger.warning(f"知识库路径不存在: {self.knowledge_base_path}")
             return
         
-        # Supported document formats
+        # 支持的文档格式
         supported_extensions = {'.md', '.txt', '.json'}
         
         for file_path in self.knowledge_base_path.rglob("*"):
             if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
                 try:
                     content = self._load_file_content(file_path)
-                    if content.strip():  # Only add non-empty content
+                    if content.strip():  # 只添加非空内容
                         doc_id = self._generate_doc_id(file_path)
                         doc = {
                             "id": doc_id,
@@ -238,46 +177,30 @@ class KnowledgeRetrievalTool(BaseTool):
                             "size": len(content)
                         }
                         self.documents.append(doc)
-                        logger.debug(f"Loaded document: {file_path.name}")
+                        logger.debug(f"加载文档: {file_path.name}")
                         
                 except Exception as e:
-                    logger.warning(f"Failed to load document {file_path}: {e}")
+                    logger.warning(f"加载文档失败 {file_path}: {e}")
     
     def _generate_doc_id(self, file_path: Path) -> str:
-        """
-        Generate document ID.
-        
-        Args:
-            file_path (Path): Path to the document file.
-            
-        Returns:
-            str: Unique document identifier.
-        """
-        # Generate unique ID using file path and modification time
+        """生成文档ID"""
+        # 使用文件路径和修改时间生成唯一ID
         stat = file_path.stat()
         content = f"{file_path}_{stat.st_mtime}"
         return hashlib.md5(content.encode()).hexdigest()
     
     def _load_file_content(self, file_path: Path) -> str:
-        """
-        Load file content.
-        
-        Args:
-            file_path (Path): Path to the file to load.
-            
-        Returns:
-            str: The content of the file as text.
-        """
+        """加载文件内容"""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 if file_path.suffix.lower() == '.json':
                     data = json.load(f)
-                    # Convert JSON to searchable text
+                    # 将JSON转换为可搜索的文本
                     return self._json_to_searchable_text(data)
                 else:
                     return f.read()
         except UnicodeDecodeError:
-            # Try other encodings
+            # 尝试其他编码
             try:
                 with open(file_path, 'r', encoding='gb2312') as f:
                     if file_path.suffix.lower() == '.json':
@@ -286,19 +209,11 @@ class KnowledgeRetrievalTool(BaseTool):
                     else:
                         return f.read()
             except Exception:
-                logger.warning(f"Cannot read file {file_path}, skipping")
+                logger.warning(f"无法读取文件 {file_path}，跳过")
                 return ""
     
     def _json_to_searchable_text(self, data: Any) -> str:
-        """
-        Convert JSON data to searchable text.
-        
-        Args:
-            data (Any): JSON data to convert.
-            
-        Returns:
-            str: Searchable text representation of the JSON data.
-        """
+        """将JSON数据转换为可搜索的文本"""
         if isinstance(data, dict):
             texts = []
             for key, value in data.items():
@@ -313,22 +228,14 @@ class KnowledgeRetrievalTool(BaseTool):
             return str(data)
     
     def _build_index(self):
-        """
-        Build ChromaDB vector index.
-        
-        This method adds documents to the ChromaDB collection, generating embeddings
-        and building the vector index for efficient similarity search.
-        
-        Raises:
-            Exception: If index building fails.
-        """
+        """构建ChromaDB向量索引"""
         try:
-            logger.info("Building ChromaDB vector index...")
+            logger.info("构建ChromaDB向量索引...")
             
-            # Get current document count in collection
+            # 获取当前集合中的文档数量
             existing_count = self.collection.count()
             
-            # Prepare documents to add
+            # 准备要添加的文档
             new_documents = []
             ids_to_add = []
             contents_to_add = []
@@ -337,13 +244,13 @@ class KnowledgeRetrievalTool(BaseTool):
             for doc in self.documents:
                 doc_id = doc["id"]
                 
-                # Check if document already exists
+                # 检查文档是否已存在
                 try:
                     existing_docs = self.collection.get(ids=[doc_id])
                     if existing_docs["ids"]:
-                        continue  # Document exists, skip
+                        continue  # 文档已存在，跳过
                 except Exception:
-                    pass  # Document doesn't exist, need to add
+                    pass  # 文档不存在，需要添加
                 
                 ids_to_add.append(doc_id)
                 contents_to_add.append(doc["content"])
@@ -356,9 +263,9 @@ class KnowledgeRetrievalTool(BaseTool):
                 new_documents.append(doc)
             
             if ids_to_add:
-                logger.info(f"Adding {len(ids_to_add)} new documents to ChromaDB...")
+                logger.info(f"添加 {len(ids_to_add)} 个新文档到ChromaDB...")
                 
-                # Process in batches to avoid memory issues
+                # 分批处理以避免内存问题
                 batch_size = 64
                 for i in range(0, len(ids_to_add), batch_size):
                     batch_ids = ids_to_add[i:i+batch_size]
@@ -371,56 +278,45 @@ class KnowledgeRetrievalTool(BaseTool):
                         metadatas=batch_metadatas
                     )
                 
-                logger.info(f"Successfully added {len(ids_to_add)} documents")
+                logger.info(f"成功添加 {len(ids_to_add)} 个文档")
             else:
-                logger.info("All documents already exist in ChromaDB")
+                logger.info("所有文档都已存在于ChromaDB中")
             
             total_count = self.collection.count()
-            logger.info(f"ChromaDB index building completed, total documents: {total_count}")
+            logger.info(f"ChromaDB索引构建完成，总文档数: {total_count}")
             
         except Exception as e:
-            logger.error(f"Failed to build vector index: {e}")
+            logger.error(f"构建向量索引失败: {e}")
             raise
     
     async def execute(self, query: str, top_k: int = 3, threshold: float = 0.01, **kwargs) -> ToolResult:
-        """
-        Execute knowledge base retrieval.
-        
-        Args:
-            query (str): Search query text.
-            top_k (int, optional): Number of top results to return. Defaults to 3.
-            threshold (float, optional): Similarity threshold for filtering results. Defaults to 0.01.
-            **kwargs: Additional keyword arguments.
-            
-        Returns:
-            ToolResult: Retrieval results containing found documents and metadata.
-        """
+        """执行知识库检索"""
         try:
             if not self.collection:
                 return ToolResult(
-                    error="Knowledge base not initialized",
-                    output="Please ensure knowledge base is properly initialized"
+                    error="知识库未初始化",
+                    output="请确保知识库正确初始化"
                 )
             
-            logger.info(f"Retrieval query: {query}")
+            logger.info(f"检索查询: {query}")
             
-            # Execute vector retrieval
+            # 执行向量检索
             results = self.collection.query(
                 query_texts=[query],
                 n_results=top_k,
                 include=["documents", "metadatas", "distances"]
             )
 
-            logger.info(f"Retrieved {len(results)} results")
-            logger.info(results)
+            logger.info(f"检索到 {len(results)} 个结果")
+#            logger.info(results)
 
             if not results["ids"] or not results["ids"][0]:
                 return ToolResult(
-                    output="No relevant documents found, please try adjusting the query content",
+                    output="未找到相关文档，请尝试调整查询内容",
                     error=None
                 )
             
-            # Process results
+            # 处理结果
             formatted_results = []
             for i, (doc_id, document, metadata, distance) in enumerate(zip(
                 results["ids"][0], 
@@ -428,8 +324,8 @@ class KnowledgeRetrievalTool(BaseTool):
                 results["metadatas"][0], 
                 results["distances"][0]
             )):
-                # ChromaDB uses distance, smaller distance means higher similarity
-                # Convert to similarity score (0-1)
+                # ChromaDB使用距离，距离越小相似度越高
+                # 转换为相似度分数 (0-1)
 
                 if distance <= threshold:
                     result = {
@@ -446,17 +342,17 @@ class KnowledgeRetrievalTool(BaseTool):
             
             if not formatted_results:
                 return ToolResult(
-                    output=f"No documents found with similarity above {threshold}, please try lowering the similarity threshold",
+                    output=f"未找到相似度超过 {threshold} 的相关文档，请尝试降低相似度阈值",
                     error=None
                 )
             
-            # Format output
-            output_text = f"Found {len(formatted_results)} relevant documents:\n\n"
+            # 格式化输出
+            output_text = f"找到 {len(formatted_results)} 个相关文档:\n\n"
             for result in formatted_results:
-                output_text += f"**{result['rank']}. {result['filename']}** (Similarity: {result['score']:.3f})\n"
-                output_text += f"Type: {result['type']}, Size: {result['size']} characters\n"
-                output_text += f"Preview: {result['content_preview']}\n"
-                output_text += f"Path: {result['path']}\n\n"
+                output_text += f"**{result['rank']}. {result['filename']}** (相似度: {result['score']:.3f})\n"
+                output_text += f"类型: {result['type']}, 大小: {result['size']} 字符\n"
+                output_text += f"预览: {result['content_preview']}\n"
+                output_text += f"路径: {result['path']}\n\n"
             
             return ToolResult(
                 output=output_text,
@@ -464,57 +360,38 @@ class KnowledgeRetrievalTool(BaseTool):
             )
             
         except Exception as e:
-            logger.error(f"Knowledge base retrieval failed: {e}")
+            logger.error(f"知识库检索失败: {e}")
             return ToolResult(
-                error=f"Retrieval failed: {str(e)}",
-                output="Please check if knowledge base is properly initialized"
+                error=f"检索失败: {str(e)}",
+                output="请检查知识库是否正确初始化"
             )
     
     def refresh_knowledge_base(self):
-        """
-        Refresh the knowledge base.
-        
-        This method reloads documents from the file system and rebuilds
-        the vector index to incorporate any changes.
-        """
-        logger.info("Refreshing knowledge base...")
+        """刷新知识库"""
+        logger.info("刷新知识库...")
         try:
-            # Reload documents
+            # 重新加载文档
             self._load_documents()
             
             if self.documents:
-                # Rebuild index
+                # 重建索引
                 self._build_index()
-                logger.info(f"Knowledge base refresh completed, total {len(self.documents)} documents")
+                logger.info(f"知识库刷新完成，共 {len(self.documents)} 个文档")
             else:
-                logger.warning("No documents found after refresh")
+                logger.warning("刷新后未找到任何文档")
                 
         except Exception as e:
-            logger.error(f"Failed to refresh knowledge base: {e}")
+            logger.error(f"刷新知识库失败: {e}")
     
     def get_document_by_path(self, path: str) -> Optional[Dict[str, Any]]:
-        """
-        Get document content by path.
-        
-        Args:
-            path (str): File path or filename to search for.
-            
-        Returns:
-            Optional[Dict[str, Any]]: Document metadata and content if found, None otherwise.
-        """
+        """根据路径获取文档内容"""
         for doc in self.documents:
             if doc["path"] == path or doc["filename"] == path:
                 return doc
         return None
     
     def get_statistics(self) -> Dict[str, Any]:
-        """
-        Get knowledge base statistics.
-        
-        Returns:
-            Dict[str, Any]: Dictionary containing statistics about the knowledge base
-                including document count, file types, sizes, etc.
-        """
+        """获取知识库统计信息"""
         if not self.collection:
             return {"total_documents": 0}
         
@@ -535,7 +412,7 @@ class KnowledgeRetrievalTool(BaseTool):
                     "average_size": 0
                 })
                 
-                # Count file types
+                # 统计文件类型
                 for doc in self.documents:
                     file_type = doc["type"]
                     if file_type not in stats["file_types"]:
@@ -548,19 +425,14 @@ class KnowledgeRetrievalTool(BaseTool):
             return stats
             
         except Exception as e:
-            logger.error(f"Failed to get statistics: {e}")
+            logger.error(f"获取统计信息失败: {e}")
             return {"error": str(e)}
     
     def delete_collection(self):
-        """
-        Delete collection (used for resetting knowledge base).
-        
-        This method removes the entire ChromaDB collection, effectively
-        resetting the knowledge base to an empty state.
-        """
+        """删除集合（用于重置知识库）"""
         try:
             if self.client and self.collection_name:
                 self.client.delete_collection(name=self.collection_name)
-                logger.info(f"Deleted collection: {self.collection_name}")
+                logger.info(f"已删除集合: {self.collection_name}")
         except Exception as e:
-            logger.warning(f"Failed to delete collection: {e}")
+            logger.warning(f"删除集合失败: {e}")

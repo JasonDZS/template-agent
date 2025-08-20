@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Report Generator Main Module
-
-This module integrates Agent, Tool, and Converter functionality to provide
-a comprehensive report generation system with template-based automation.
+报告生成器主模块
+整合Agent、工具和转换器功能
 """
 
 import asyncio
@@ -20,32 +18,16 @@ from app.config import settings
 
 
 class ReportGenerationSystem:
-    """Comprehensive report generation system.
-    
-    This class provides a high-level interface for generating reports using
-    templates, knowledge bases, and AI agents. It handles the entire workflow
-    from template processing to final report output.
-    
-    Attributes:
-        knowledge_base_path: Path to the knowledge base directory
-        template_base_path: Path to the template directory
-        converter: Markdown converter instance
-    """
+    """报告生成系统"""
     
     def __init__(self, 
                  knowledge_base_path: str = "workdir/documents",
                  template_base_path: str = "workdir/template"):
-        """Initialize the report generation system.
-        
-        Args:
-            knowledge_base_path: Directory containing knowledge base documents
-            template_base_path: Directory containing report templates
-        """
         self.knowledge_base_path = Path(knowledge_base_path)
         self.template_base_path = Path(template_base_path)
         self.converter = MarkdownConverter()
         
-        # Ensure directories exist
+        # 确保目录存在
         self.knowledge_base_path.mkdir(parents=True, exist_ok=True)
         self.template_base_path.mkdir(parents=True, exist_ok=True)
     
@@ -53,37 +35,24 @@ class ReportGenerationSystem:
                             template_name: str,
                             output_name: Optional[str] = None,
                             max_steps: int = 20) -> str:
-        """Generate a report using the specified template.
-        
-        Args:
-            template_name: Name or path of the template to use
-            output_name: Optional custom output filename
-            max_steps: Maximum number of execution steps
-            
-        Returns:
-            Success message with generation details
-            
-        Raises:
-            FileNotFoundError: If template file is not found
-            Exception: If report generation fails
-        """
+        """生成报告"""
         try:
-            # Find template file
+            # 查找模板文件
             template_path = self._find_template(template_name)
             if not template_path:
-                raise FileNotFoundError(f"Template file not found: {template_name}")
+                raise FileNotFoundError(f"未找到模板文件: {template_name}")
             
-            # Set output path
+            # 设置输出路径
             if not output_name:
                 output_name = f"generated_report_{template_path.stem}"
             
             output_path = Path("workdir") / "output" / output_name
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # Create and configure Agent
+            # 创建并配置Agent
             agent = ReportGeneratorAgent(
                 name=f"report_generator_{template_path.stem}",
-                description=f"Generate report based on template {template_path.name}",
+                description=f"基于模板 {template_path.name} 生成报告",
                 template_path=str(template_path),
                 knowledge_base_path=str(self.knowledge_base_path),
                 output_path=str(output_path),
@@ -92,48 +61,41 @@ class ReportGenerationSystem:
                 max_concurrent=settings.max_concurrent,
             )
             
-            logger.info(f"Starting report generation with template: {template_path.name}")
-            logger.info(f"Knowledge base path: {self.knowledge_base_path}")
-            logger.info(f"Output path: {output_path}")
+            logger.info(f"开始生成报告，模板: {template_path.name}")
+            logger.info(f"知识库路径: {self.knowledge_base_path}")
+            logger.info(f"输出路径: {output_path}")
             
-            # Run Agent
+            # 运行Agent
             result = await agent.run_with_template(str(template_path), str(output_path))
             
-            # Get progress information
+            # 获取进度信息
             progress = agent.get_progress()
             
-            success_message = f"""Report generation completed!
+            success_message = f"""报告生成完成！
 
-Template: {template_path.name}
-Progress: {progress['completed_sections']}/{progress['total_sections']} 
-          ({progress['progress_percentage']:.1f}%)
-Output: {output_path}.json, {output_path}.md
+模板: {template_path.name}
+进度: {progress['completed_sections']}/{progress['total_sections']} 
+      ({progress['progress_percentage']:.1f}%)
+输出: {output_path}.json, {output_path}.md
 
-Detailed execution result:
+详细执行结果:
 {result}"""
             
-            logger.info("Report generation task completed")
+            logger.info("报告生成任务完成")
             return success_message
             
         except Exception as e:
-            error_message = f"Report generation failed: {str(e)}"
+            error_message = f"报告生成失败: {str(e)}"
             logger.error(error_message)
             raise Exception(error_message)
     
     def _find_template(self, template_name: str) -> Optional[Path]:
-        """Find template file by name or path.
-        
-        Args:
-            template_name: Template name or path to search for
-            
-        Returns:
-            Path to the template file if found, None otherwise
-        """
-        # Direct path
+        """查找模板文件"""
+        # 直接路径
         if Path(template_name).exists():
             return Path(template_name)
         
-        # Search in template directory
+        # 在模板目录中查找
         possible_paths = [
             self.template_base_path / template_name,
             self.template_base_path / f"{template_name}.md",
@@ -149,31 +111,19 @@ Detailed execution result:
     async def convert_template(self, 
                              template_path: str,
                              output_format: str = "json") -> str:
-        """Convert template between formats.
-        
-        Args:
-            template_path: Path to the template file
-            output_format: Target format (json or markdown)
-            
-        Returns:
-            Success message with conversion details
-            
-        Raises:
-            FileNotFoundError: If template file doesn't exist
-            Exception: If conversion fails
-        """
+        """转换模板格式"""
         try:
             template_file = Path(template_path)
             if not template_file.exists():
-                raise FileNotFoundError(f"Template file does not exist: {template_path}")
+                raise FileNotFoundError(f"模板文件不存在: {template_path}")
             
-            # Read template content
+            # 读取模板内容
             template_content = template_file.read_text(encoding='utf-8')
             
-            # Determine source format
+            # 确定源格式
             source_format = "markdown" if template_content.strip().startswith('#') else "json"
             
-            # Execute conversion
+            # 执行转换
             conversion_request = ConversionRequest(
                 source_format=source_format,
                 target_format=output_format,
@@ -183,7 +133,7 @@ Detailed execution result:
             result = self.converter.convert(conversion_request)
             
             if result.success:
-                # Save conversion result
+                # 保存转换结果
                 output_path = template_file.with_suffix(f'.{output_format}')
                 if output_format == "json":
                     import json
@@ -193,54 +143,43 @@ Detailed execution result:
                     with open(output_path, 'w', encoding='utf-8') as f:
                         f.write(result.result)
                 
-                return f"Template conversion successful: {output_path}"
+                return f"模板转换成功: {output_path}"
             else:
                 raise Exception(result.error)
                 
         except Exception as e:
-            error_message = f"Template conversion failed: {str(e)}"
+            error_message = f"模板转换失败: {str(e)}"
             logger.error(error_message)
             raise Exception(error_message)
     
     async def test_knowledge_base(self, query: str = "智能鞋垫") -> str:
-        """Test knowledge base retrieval functionality.
-        
-        Args:
-            query: Query string to test with
-            
-        Returns:
-            Test results with statistics and sample retrieval
-        """
+        """测试知识库检索"""
         try:
             knowledge_tool = KnowledgeRetrievalTool(str(self.knowledge_base_path))
             result = await knowledge_tool.execute(query=query, top_k=3)
             
             if result.error:
-                return f"Knowledge base retrieval test failed: {result.error}"
+                return f"知识库检索测试失败: {result.error}"
             else:
                 stats = knowledge_tool.get_statistics()
-                return f"""Knowledge base retrieval test successful!
+                return f"""知识库检索测试成功！
 
-Statistics:
-- Total documents: {stats['total_documents']}
-- Total size: {stats['total_size']} characters
-- Average size: {stats['average_size']} characters
-- File types: {stats['file_types']}
+统计信息:
+- 文档总数: {stats['total_documents']}
+- 总大小: {stats['total_size']} 字符
+- 平均大小: {stats['average_size']} 字符
+- 文件类型: {stats['file_types']}
 
-Retrieval results (query: "{query}"):
+检索结果 (查询: "{query}"):
 {result.output}"""
                 
         except Exception as e:
-            error_message = f"Knowledge base test failed: {str(e)}"
+            error_message = f"知识库测试失败: {str(e)}"
             logger.error(error_message)
             return error_message
     
     def list_templates(self) -> str:
-        """List available templates in the template directory.
-        
-        Returns:
-            Formatted string listing all available templates
-        """
+        """列出可用模板"""
         templates = []
         
         if self.template_base_path.exists():
@@ -254,9 +193,9 @@ Retrieval results (query: "{query}"):
                     })
         
         if not templates:
-            return "No available templates found"
+            return "未找到可用模板"
         
-        result = "Available templates:\n"
+        result = "可用模板:\n"
         for i, template in enumerate(templates, 1):
             result += f"{i}. {template['name']} ({template['type']}, {template['size']} bytes)\n"
         
@@ -264,28 +203,24 @@ Retrieval results (query: "{query}"):
 
 
 async def main():
-    """Command-line entry point for the report generation system.
-    
-    Provides a CLI interface for generating reports, converting templates,
-    testing knowledge bases, and listing available templates.
-    """
-    parser = argparse.ArgumentParser(description="Intelligent Report Generator")
+    """命令行入口"""
+    parser = argparse.ArgumentParser(description="智能报告生成器")
     parser.add_argument("action", choices=["generate", "convert", "test", "list"], 
-                       help="Action to perform")
-    parser.add_argument("--template", "-t", help="Template name or path")
-    parser.add_argument("--output", "-o", help="Output filename")
+                       help="执行的操作")
+    parser.add_argument("--template", "-t", help="模板名称或路径")
+    parser.add_argument("--output", "-o", help="输出文件名")
     parser.add_argument("--format", "-f", default="json", 
-                       choices=["json", "markdown"], help="Conversion target format")
-    parser.add_argument("--query", "-q", default="智能鞋垫", help="Test query string")
-    parser.add_argument("--max-steps", type=int, default=20, help="Maximum execution steps")
+                       choices=["json", "markdown"], help="转换目标格式")
+    parser.add_argument("--query", "-q", default="智能鞋垫", help="测试查询")
+    parser.add_argument("--max-steps", type=int, default=20, help="最大执行步数")
     parser.add_argument("--knowledge-base", default="workdir/documents", 
-                       help="Knowledge base directory path")
+                       help="知识库路径")
     parser.add_argument("--template-base", default="workdir/template", 
-                       help="Template base directory path")
+                       help="模板基础路径")
     
     args = parser.parse_args()
     
-    # Create report generation system
+    # 创建报告生成系统
     system = ReportGenerationSystem(
         knowledge_base_path=args.knowledge_base,
         template_base_path=args.template_base
@@ -294,7 +229,7 @@ async def main():
     try:
         if args.action == "generate":
             if not args.template:
-                print("Error: Report generation requires template specification (--template)")
+                print("错误: 生成报告需要指定模板 (--template)")
                 return
             
             result = await system.generate_report(
@@ -306,7 +241,7 @@ async def main():
             
         elif args.action == "convert":
             if not args.template:
-                print("Error: Template conversion requires template path specification (--template)")
+                print("错误: 转换模板需要指定模板路径 (--template)")
                 return
             
             result = await system.convert_template(
@@ -324,8 +259,8 @@ async def main():
             print(result)
             
     except Exception as e:
-        print(f"Execution failed: {e}")
-        logger.error(f"Command execution failed: {e}")
+        print(f"执行失败: {e}")
+        logger.error(f"命令执行失败: {e}")
 
 
 if __name__ == "__main__":
