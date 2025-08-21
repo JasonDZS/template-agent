@@ -122,6 +122,7 @@ class TaskScheduler:
                 task_input = executor.prepare_input(task, dependencies_results)
                 task_output = await executor.execute(task_input)
                 content = task_output.content
+                metadata = task_output.metadata
                 
                 # Store output metadata in task result
                 task.output_metadata = task_output.metadata
@@ -134,8 +135,9 @@ class TaskScheduler:
                     content = await self._execute_generation_task(task)
                 else:  # MERGE
                     content = await self._execute_merge_task(task)
+                metadata = {}  # Legacy system has no metadata
             
-            task.mark_completed(content=content)
+            task.mark_completed(content=content, metadata=metadata)
             self.completed_tasks.add(task.id)
             
             # Log successful completion

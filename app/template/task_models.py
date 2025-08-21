@@ -41,6 +41,7 @@ class TaskResult(BaseModel):
     start_time: Optional[datetime] = Field(None, description="Task start timestamp")
     end_time: Optional[datetime] = Field(None, description="Task completion timestamp")
     duration: Optional[float] = Field(None, description="Task execution duration in seconds")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional task execution metadata")
     
     @field_validator('duration')
     def validate_duration(cls, v):
@@ -180,7 +181,7 @@ class Task(BaseModel):
             set(self.dependencies).issubset(completed_tasks)
         )
     
-    def mark_completed(self, content: str = "", error: str = "") -> None:
+    def mark_completed(self, content: str = "", error: str = "", metadata: Optional[Dict[str, Any]] = None) -> None:
         """Mark task as completed with result."""
         end_time = datetime.now()
         start_time = self.result.start_time if self.result else end_time
@@ -194,7 +195,8 @@ class Task(BaseModel):
             error=error,
             start_time=start_time,
             end_time=end_time,
-            duration=duration
+            duration=duration,
+            metadata=metadata or {}
         )
     
     def mark_running(self) -> None:

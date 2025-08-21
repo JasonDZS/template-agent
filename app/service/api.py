@@ -254,6 +254,13 @@ async def get_task_details(job_id: str, task_id: str):
         
         task = job.tasks[task_id]
         
+        # Extract agent messages from metadata for easier frontend access
+        agent_messages = []
+        if task.metadata and 'memory' in task.metadata:
+            memory = task.metadata['memory']
+            if isinstance(memory, list):
+                agent_messages = memory
+        
         # Return detailed task information
         task_details = {
             "task_id": task.task_id,
@@ -267,6 +274,7 @@ async def get_task_details(job_id: str, task_id: str):
             "content_length": len(task.content) if task.content else 0,
             "dependencies": task.dependencies,
             "metadata": task.metadata or {},
+            "agent_messages": agent_messages,  # Extracted for convenience
             "error_message": task.error_message,
             "start_time": task.start_time.isoformat() if task.start_time else None,
             "end_time": task.end_time.isoformat() if task.end_time else None

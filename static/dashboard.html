@@ -533,6 +533,50 @@
             overflow-y: auto;
         }
         
+        .agent-messages-container {
+            background: #f7fafc;
+            border-radius: 6px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .agent-message {
+            padding: 12px 15px;
+            border-bottom: 1px solid #e2e8f0;
+            margin: 0;
+        }
+        
+        .agent-message:last-child {
+            border-bottom: none;
+        }
+        
+        .message-role {
+            font-weight: bold;
+            font-size: 12px;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        
+        .message-role.system {
+            color: #805ad5;
+        }
+        
+        .message-role.user {
+            color: #3182ce;
+        }
+        
+        .message-role.assistant {
+            color: #38a169;
+        }
+        
+        .message-content {
+            font-size: 13px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            color: #2d3748;
+        }
+        
         .task-clickable {
             cursor: pointer;
             transition: background-color 0.2s ease;
@@ -708,6 +752,11 @@
                 <div class="task-info-section">
                     <h4>📊 元数据</h4>
                     <div class="task-metadata-display" id="taskDetailMetadata">{}</div>
+                </div>
+                
+                <div class="task-info-section" id="taskDetailMessagesSection" style="display: none;">
+                    <h4>🤖 智能体对话</h4>
+                    <div class="agent-messages-container" id="taskDetailMessages"></div>
                 </div>
                 
                 <div class="task-info-section" id="taskDetailErrorSection" style="display: none;">
@@ -1396,6 +1445,34 @@
                 metadataDiv.textContent = '{}';
             }
             
+            // Display agent messages
+            const messagesSection = document.getElementById('taskDetailMessagesSection');
+            const messagesContainer = document.getElementById('taskDetailMessages');
+            
+            if (taskData.agent_messages && Array.isArray(taskData.agent_messages) && taskData.agent_messages.length > 0) {
+                messagesSection.style.display = 'block';
+                messagesContainer.innerHTML = '';
+                
+                taskData.agent_messages.forEach((message, index) => {
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'agent-message';
+                    
+                    const roleDiv = document.createElement('div');
+                    roleDiv.className = `message-role ${message.role || 'unknown'}`;
+                    roleDiv.textContent = this.getRoleText(message.role || 'unknown');
+                    
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'message-content';
+                    contentDiv.textContent = message.content || '(无内容)';
+                    
+                    messageDiv.appendChild(roleDiv);
+                    messageDiv.appendChild(contentDiv);
+                    messagesContainer.appendChild(messageDiv);
+                });
+            } else {
+                messagesSection.style.display = 'none';
+            }
+            
             // Display error if exists
             const errorSection = document.getElementById('taskDetailErrorSection');
             const errorDiv = document.getElementById('taskDetailError');
@@ -1448,6 +1525,16 @@
         ReportDashboard.prototype.closeTaskDetails = function() {
             const modal = document.getElementById('taskDetailsModal');
             modal.classList.remove('show');
+        };
+        
+        ReportDashboard.prototype.getRoleText = function(role) {
+            const roleMap = {
+                'system': '系统',
+                'user': '用户', 
+                'assistant': '智能体',
+                'unknown': '未知'
+            };
+            return roleMap[role] || role;
         };
 
         // Initialize dashboard when page loads

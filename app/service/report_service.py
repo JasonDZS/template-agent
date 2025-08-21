@@ -463,9 +463,17 @@ class ReportGenerationService:
                             job_task.status = TaskStatus.COMPLETED
                             if hasattr(task, 'result') and task.result:
                                 job_task.content = task.result.content
-                                # Also copy metadata from task result
+                                # Copy metadata from task result - ensure we get the executor result metadata
                                 if hasattr(task.result, 'metadata') and task.result.metadata:
+                                    # Update with all metadata from the task result
                                     job_task.metadata.update(task.result.metadata)
+                                    logger.info(f"Updated task {task.id} metadata with keys: {list(task.result.metadata.keys())}")
+                                    # Log memory specifically if it exists
+                                    if 'memory' in task.result.metadata:
+                                        memory_count = len(task.result.metadata['memory']) if isinstance(task.result.metadata['memory'], list) else 0
+                                        logger.info(f"Task {task.id} has memory with {memory_count} messages")
+                            else:
+                                logger.warning(f"Task {task.id} completed but has no result or result.content")
             
             round_num += 1
             await asyncio.sleep(0.1)  # Small delay between rounds
