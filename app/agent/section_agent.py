@@ -3,21 +3,23 @@
 """
 Section Generation Agent.
 
-This module provides a basic section generation agent that creates individual
-sections of a report using knowledge retrieval and LLM generation.
+This module provides a section generation agent specialized for content generation
+tasks using knowledge retrieval and LLM generation.
 """
 
 from typing import Dict, Any, Optional
 from app.agent.base import BaseAgent
 from app.config import settings
-from app.tool.knowledge_retrieval import KnowledgeRetrievalTool
+from app.tool.knowledge_retrieval import get_knowledge_retrieval_tool
 from app.schema import AgentState
 from app.logger import logger
+from app.converter import children_content_to_markdown
+from app.prompt.section_agent import TaskPrompts
 
 
 class SectionAgent(BaseAgent):
     """
-    Single section generation agent.
+    Section generation agent specialized for content generation tasks.
     
     This agent is responsible for generating individual sections of a report.
     It retrieves relevant information from a knowledge base and uses an LLM
@@ -36,6 +38,7 @@ class SectionAgent(BaseAgent):
                  section_info: Dict[str, Any],
                  report_context: Dict[str, Any],
                  knowledge_base_path: str = "workdir/documents",
+                 output_format: Optional[str] = None,
                  **kwargs):
         """
         Initialize the SectionAgent.
@@ -47,6 +50,8 @@ class SectionAgent(BaseAgent):
                 including title and other metadata.
             knowledge_base_path (str, optional): Path to the knowledge base directory.
                 Defaults to "workdir/documents".
+            output_format (str, optional): Expected output format for the section.
+                Defaults to None.
             **kwargs: Additional keyword arguments passed to the parent class.
         """
         super().__init__(**kwargs)
@@ -56,7 +61,7 @@ class SectionAgent(BaseAgent):
         self.knowledge_base_path = knowledge_base_path
         
         # Initialize tools
-        self.knowledge_tool = KnowledgeRetrievalTool(knowledge_base_path)
+        self.knowledge_tool = get_knowledge_retrieval_tool(knowledge_base_path)
         
         # Generated content
         self.generated_content = ""
@@ -64,33 +69,29 @@ class SectionAgent(BaseAgent):
         
         # Set agent default parameters
         section_title = section_info.get("content", "Untitled Section")
+        section_level = section_info.get("level", 1)
+        report_title = report_context.get("title", "")
+        
         if not self.description:
             self.description = f"Dedicated agent for generating section '{section_title}'"
         
-        # Set system prompt
-        self.system_prompt = f"""You are an agent specialized in generating the report section "{section_title}".
-
-Report Background Information:
-- Report Title: {report_context.get('title', '')}
-- Current Section: {section_title} (Level {section_info.get('level', 1)})
-- Section ID: {section_info.get('id', 0)}
-
-Your Tasks:
-1. Thoroughly understand the role and positioning of this section within the overall report
-2. Use the knowledge_retrieval tool to obtain relevant information
-3. Generate high-quality, structured section content
-4. Ensure content is highly relevant to the section title and fits the overall report style
-
-Content Requirements:
-- If high-level heading (1-2 levels): provide comprehensive, strategic content
-- If low-level heading (3+ levels): provide specific, detailed implementation content
-- Moderate content length (200-800 words)
-- Use professional language, ensuring accuracy and readability
-- Include data, cases, or specific recommendations when necessary
-
-Completion Conditions:
-- Use the terminate tool to end the task after generating complete section content
-"""
+        # Process output format: convert children_content to markdown if provided
+        processed_output_format = ""
+        if output_format:
+            # If output_format is a list (children_content), convert to markdown
+            if isinstance(output_format, list):
+                processed_output_format = children_content_to_markdown(output_format)
+            else:
+                processed_output_format = str(output_format)
+        
+        # Set up generation prompt
+        self.system_prompt = TaskPrompts.GENERATION_PROMPT.format(
+            section_title=section_title,
+            report_title=report_title,
+            section_level=section_level,
+            output_format=processed_output_format
+        )
+        self.update_memory("system", self.system_prompt)
     
     async def step(self) -> str:
         """
@@ -134,37 +135,13 @@ Completion Conditions:
                 logger.error(f"Knowledge retrieval exception: {e}")
                 knowledge_context = "Knowledge base retrieval encountered problems, please generate content based on professional judgment."
             
-            # Build content generation prompt
-            content_prompt = f"""Please generate professional content for the following section:
-
-Section Title: {section_title}
-Section Level: {self.section_info.get('level', 1)}
-Report Title: {report_title}
-
-Relevant Knowledge Base Information:
+            # Build knowledge context prompt
+            knowledge_prompt = f"""Relevant Knowledge Base Information:
 {knowledge_context}
 
-Please generate content for this section based on the above information. Requirements:
-
-1. Content Structure:
-   - If 1-2 level heading: provide overview, importance, and main points for this section
-   - If 3+ level heading: provide specific implementation details, methods, or cases
-
-2. Content Quality:
-   - Ensure high relevance to the section title
-   - Content should be accurate, professional, and valuable
-   - Language should be clear and understandable with strong logic
-   - Moderate length (200-800 words)
-
-3. Format Requirements:
-   - Output section body content directly
-   - Do not include section title (will be added automatically)
-   - May use sub-headings, lists, and other formats
-   - Include specific data or recommendations when necessary
-
-Please start generating the content for this section:"""
+Please generate content for this section based on the above knowledge and your system instructions."""
             
-            self.update_memory("user", content_prompt)
+            self.update_memory("user", knowledge_prompt)
             
             # Call LLM to generate content
             response = await self.llm.ask(self.memory.messages)

@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 
 from app.agent.base import BaseAgent
-from app.tool.knowledge_retrieval import KnowledgeRetrievalTool
+from app.tool.knowledge_retrieval import get_knowledge_retrieval_tool
 from app.converter import MarkdownConverter, ConversionRequest
 from app.schema import AgentState
 from app.logger import logger
@@ -69,7 +69,7 @@ class ReportGeneratorAgentSingle(BaseAgent):
         self.knowledge_base_path = knowledge_base_path
 
         # Initialize tools
-        self.knowledge_tool = KnowledgeRetrievalTool(knowledge_base_path)
+        self.knowledge_tool = get_knowledge_retrieval_tool(knowledge_base_path)
         self.converter = MarkdownConverter()
 
         # Report template and content structures

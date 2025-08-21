@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.agent.report_multi import ReportGeneratorAgent
-from app.tool.knowledge_retrieval import KnowledgeRetrievalTool
+from app.tool.knowledge_retrieval import get_knowledge_retrieval_tool
 from app.converter import MarkdownConverter, ConversionRequest
 from app.logger import logger
 from app.config import settings
@@ -97,7 +97,7 @@ class ReportGenerationSystem:
             logger.info(f"Output path: {output_path}")
             
             # Run Agent
-            result = await agent.run_with_template(str(template_path), str(output_path))
+            result = await agent.run_with_schedule(str(template_path), str(output_path))
             
             # Get progress information
             progress = agent.get_progress()
@@ -212,7 +212,7 @@ Detailed execution result:
             Test results with statistics and sample retrieval
         """
         try:
-            knowledge_tool = KnowledgeRetrievalTool(str(self.knowledge_base_path))
+            knowledge_tool = get_knowledge_retrieval_tool(str(self.knowledge_base_path))
             result = await knowledge_tool.execute(query=query, top_k=3)
             
             if result.error:

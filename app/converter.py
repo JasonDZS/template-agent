@@ -536,6 +536,9 @@ class MarkdownConverter:
         # Parse Markdown
         document = self.parser.parse(request.content)
         
+        # Add children_content to headings and restructure
+        document.content = self._add_children_content_to_headings(document.content)
+        
         # Convert to JSON
         json_result = document.model_dump()
         
@@ -599,6 +602,85 @@ class MarkdownConverter:
                 "has_title": document.title is not None
             }
         )
+    
+    def _add_children_content_to_headings(self, elements: List[MarkdownElement]) -> List[MarkdownElement]:
+        """Add children_content field to heading elements and create hierarchical structure.
+        
+        Args:
+            elements: List of document elements to process
+            
+        Returns:
+            Processed list of elements with hierarchical structure
+        """
+        result = []
+        i = 0
+        
+        while i < len(elements):
+            element = elements[i]
+            
+            # If current element is a heading, collect its children
+            if isinstance(element, HeadingElement):
+                current_level = element.level
+                children_content = []
+                
+                # Collect all elements until next heading of same or higher level
+                j = i + 1
+                while j < len(elements):
+                    next_element = elements[j]
+                    
+                    # Stop if we encounter a heading of same or higher level
+                    if (isinstance(next_element, HeadingElement) and 
+                        next_element.level <= current_level):
+                        break
+                    
+                    children_content.append(next_element)
+                    j += 1
+                
+                # Process children recursively to handle nested headings
+                if children_content:
+                    processed_children = self._add_children_content_to_headings(children_content)
+                    children_dict = [self._element_to_dict(child) for child in processed_children]
+                else:
+                    children_dict = []
+                
+                # Add children_content to the heading's attributes
+                if not hasattr(element, 'attributes') or element.attributes is None:
+                    element.attributes = {}
+                element.attributes['children_content'] = children_dict
+                
+                result.append(element)
+                # Skip all the children elements since they're now in children_content
+                i = j
+            else:
+                # Non-heading element, add as-is
+                result.append(element)
+                i += 1
+        
+        return result
+    
+    def _element_to_dict(self, element: MarkdownElement) -> Dict[str, Any]:
+        """Convert a MarkdownElement to dictionary representation.
+        
+        Args:
+            element: MarkdownElement to convert
+            
+        Returns:
+            Dictionary representation of the element
+        """
+        result = {
+            "type": element.type.value if hasattr(element.type, 'value') else str(element.type),
+            "content": element.content,
+            "children": None,
+            "attributes": element.attributes
+        }
+        
+        # Handle special cases for different element types
+        if isinstance(element, ListElement) and element.children:
+            result["children"] = [self._element_to_dict(child) for child in element.children]
+        elif hasattr(element, 'children') and element.children:
+            result["children"] = [self._element_to_dict(child) for child in element.children]
+            
+        return result
 
 
 # Convenience functions
@@ -656,3 +738,75 @@ def json_to_markdown(json_data: Union[str, Dict[str, Any]], options: Optional[Co
         return response.result
     else:
         raise ValueError(f"Conversion failed: {response.error}")
+
+
+def children_content_to_markdown(children_content: List[Dict[str, Any]], indent_level: int = 0) -> str:
+    """
+    Convert children_content JSON structure to markdown format.
+    
+    Args:
+        children_content (List[Dict[str, Any]]): List of child elements in JSON format
+        indent_level (int): Current indentation level for nested structures
+        
+    Returns:
+        str: Markdown formatted string
+    """
+    if not children_content:
+        return ""
+    
+    markdown_parts = []
+    indent = "  " * indent_level
+    
+    for item in children_content:
+        item_type = item.get("type", "")
+        content = item.get("content", "")
+        attributes = item.get("attributes", {}) or {}
+        children = item.get("children", []) or []
+        
+        if item_type == "heading":
+            level = attributes.get("level", 1)
+            markdown_parts.append(f"{'#' * level} {content}")
+            
+            # Process children_content of this heading if exists
+            heading_children_content = attributes.get("children_content", [])
+            if heading_children_content:
+                child_markdown = children_content_to_markdown(heading_children_content, indent_level + 1)
+                if child_markdown:
+                    markdown_parts.append(child_markdown)
+                    
+        elif item_type == "paragraph":
+            if content:
+                markdown_parts.append(f"{indent}{content}")
+                
+        elif item_type == "list":
+            list_type = attributes.get("list_type", "unordered")
+            start = attributes.get("start", 1)
+            
+            for i, child in enumerate(children):
+                child_content = child.get("content", "")
+                if list_type == "ordered":
+                    prefix = f"{start + i}. "
+                else:
+                    prefix = "- "
+                markdown_parts.append(f"{indent}{prefix}{child_content}")
+                
+        elif item_type == "code_block":
+            language = attributes.get("language", "")
+            markdown_parts.append(f"{indent}```{language}")
+            markdown_parts.append(f"{indent}{content}")
+            markdown_parts.append(f"{indent}```")
+            
+        elif item_type == "blockquote":
+            lines = content.split('\n') if content else []
+            for line in lines:
+                markdown_parts.append(f"{indent}> {line}")
+                
+        elif item_type == "horizontal_rule":
+            markdown_parts.append(f"{indent}---")
+            
+        else:
+            # Handle other types as plain content
+            if content:
+                markdown_parts.append(f"{indent}{content}")
+    
+    return "\n".join(markdown_parts)

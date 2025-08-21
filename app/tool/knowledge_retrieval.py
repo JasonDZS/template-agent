@@ -23,6 +23,9 @@ from .base_tool import BaseTool, ToolResult
 from ..logger import logger
 from ..config import settings
 
+# Module-level cache for singleton instances
+_knowledge_tool_instances = {}
+
 
 class OpenAIEmbeddingFunction(EmbeddingFunction):
     """
@@ -66,6 +69,25 @@ class OpenAIEmbeddingFunction(EmbeddingFunction):
             return [[0.0] * settings.EMBEDDING_DIM for _ in input]
 
 
+def get_knowledge_retrieval_tool(knowledge_base_path: str = "workdir/documents", collection_name: str = "documents") -> 'KnowledgeRetrievalTool':
+    """
+    Factory function to get a KnowledgeRetrievalTool instance with caching.
+    
+    Args:
+        knowledge_base_path (str): Path to the knowledge base directory.
+        collection_name (str): Name of the ChromaDB collection.
+        
+    Returns:
+        KnowledgeRetrievalTool: Cached instance of the tool.
+    """
+    cache_key = f"{knowledge_base_path}_{collection_name}"
+    
+    if cache_key not in _knowledge_tool_instances:
+        _knowledge_tool_instances[cache_key] = KnowledgeRetrievalTool(knowledge_base_path, collection_name)
+    
+    return _knowledge_tool_instances[cache_key]
+
+
 class KnowledgeRetrievalTool(BaseTool):
     """
     Knowledge base retrieval tool based on ChromaDB and OpenAI Compatible API vectorized search.
@@ -74,7 +96,7 @@ class KnowledgeRetrievalTool(BaseTool):
     vector embeddings. It supports multiple document formats and maintains a persistent
     vector database for efficient retrieval.
     
-    Implements singleton pattern to avoid multiple initializations.
+    Note: Use get_knowledge_retrieval_tool() factory function to avoid multiple initializations.
     
     Attributes:
         name (str): Tool identifier name.
@@ -93,10 +115,6 @@ class KnowledgeRetrievalTool(BaseTool):
     knowledge_base_path: str = "workdir/documents"
     collection_name: str = "documents"
     
-    # Singleton pattern attributes
-    _instance = None
-    _initialized = False
-    
     # Optional fields that will be set during initialization
     client: Optional[Any] = None
     collection: Optional[Any] = None
@@ -104,24 +122,9 @@ class KnowledgeRetrievalTool(BaseTool):
     embedding_function: Optional[Any] = None
     documents: List[Dict[str, Any]] = []
     
-    def __new__(cls, knowledge_base_path: str = "workdir/documents", collection_name: str = "documents"):
-        """
-        Ensure only one instance exists (singleton pattern).
-        
-        Args:
-            knowledge_base_path (str, optional): Path to the document collection directory.
-            collection_name (str, optional): Name for the ChromaDB collection.
-            
-        Returns:
-            KnowledgeRetrievalTool: The singleton instance.
-        """
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-    
     def __init__(self, knowledge_base_path: str = "workdir/documents", collection_name: str = "documents"):
         """
-        Initialize the KnowledgeRetrievalTool (only once due to singleton pattern).
+        Initialize the KnowledgeRetrievalTool.
         
         Args:
             knowledge_base_path (str, optional): Path to the document collection directory.
@@ -129,10 +132,6 @@ class KnowledgeRetrievalTool(BaseTool):
             collection_name (str, optional): Name for the ChromaDB collection.
                 Defaults to "documents".
         """
-        # Skip initialization if already initialized
-        if self._initialized:
-            return
-            
         super().__init__(knowledge_base_path=knowledge_base_path, collection_name=collection_name)
         self.knowledge_base_path = Path(knowledge_base_path)
         self.collection_name = collection_name
@@ -173,9 +172,6 @@ class KnowledgeRetrievalTool(BaseTool):
         
         # Initialize knowledge base
         self._initialize_knowledge_base()
-        
-        # Mark as initialized
-        self._initialized = True
     
     def _initialize_knowledge_base(self):
         """
@@ -479,7 +475,7 @@ class KnowledgeRetrievalTool(BaseTool):
             for result in formatted_results:
                 output_text += f"**{result['rank']}. {result['filename']}** (Similarity: {result['score']:.3f})\n"
                 output_text += f"Type: {result['type']}, Size: {result['size']} characters\n"
-                output_text += f"Preview: {result['content_preview']}\n"
+                output_text += f"Content: {result['content']}\n"
                 output_text += f"Path: {result['path']}\n\n"
             
             return ToolResult(

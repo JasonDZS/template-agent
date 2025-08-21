@@ -1,0 +1,1460 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Template Report Generation Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f5f7fa;
+            color: #2d3748;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+        
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+        
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-2px);
+        }
+        
+        .card h2 {
+            color: #4a5568;
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .full-width {
+            grid-column: 1 / -1;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #4a5568;
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.2s ease;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+            width: 100%;
+        }
+        
+        .btn:hover:not(:disabled) {
+            opacity: 0.9;
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .btn-secondary {
+            background: #718096;
+        }
+        
+        .btn-danger {
+            background: #e53e3e;
+        }
+        
+        .status-display {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-weight: 500;
+        }
+        
+        .status-pending { background-color: #fef5e7; color: #744210; }
+        .status-running { background-color: #e6fffa; color: #234e52; }
+        .status-completed { background-color: #f0fff4; color: #22543d; }
+        .status-failed { background-color: #fed7d7; color: #742a2a; }
+        .status-cancelled { background-color: #edf2f7; color: #4a5568; }
+        
+        .task-item {
+            padding: 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            transition: border-color 0.2s ease;
+        }
+        
+        .task-pending { border-color: #ed8936; }
+        .task-running { border-color: #3182ce; }
+        .task-streaming { border-color: #9f7aea; }
+        .task-completed { border-color: #38a169; }
+        .task-failed { border-color: #e53e3e; }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background-color: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+            border-radius: 4px;
+        }
+        
+        .log-output {
+            height: 400px;
+            overflow-y: auto;
+            background: #1a202c;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            margin-top: 15px;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+        }
+        
+        .log-timestamp {
+            color: #90cdf4;
+            font-weight: bold;
+        }
+        
+        .log-info { color: #90cdf4; }
+        .log-success { color: #68d391; }
+        .log-warning { color: #fbb86f; }
+        .log-error { color: #feb2b2; }
+        
+        .connection-status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        
+        .connected {
+            background-color: #c6f6d5;
+            color: #22543d;
+        }
+        
+        .disconnected {
+            background-color: #fed7d7;
+            color: #742a2a;
+        }
+        
+        .file-upload-area {
+            border: 2px dashed #cbd5e0;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s ease;
+            margin-bottom: 15px;
+        }
+        
+        .file-upload-area:hover {
+            border-color: #667eea;
+        }
+        
+        .file-upload-area.dragover {
+            border-color: #667eea;
+            background-color: #f7fafc;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #e2e8f0;
+            border-radius: 50%;
+            border-top-color: #667eea;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* 任务内容展开样式 */
+        .expand-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            transition: background-color 0.2s ease;
+            font-size: 16px;
+        }
+        
+        .expand-btn:hover {
+            background-color: #f0f0f0;
+        }
+        
+        .task-content-area {
+            margin-top: 15px;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 15px;
+            animation: slideDown 0.3s ease;
+        }
+        
+        @keyframes slideDown {
+            from {
+                max-height: 0;
+                opacity: 0;
+            }
+            to {
+                max-height: 500px;
+                opacity: 1;
+            }
+        }
+        
+        .task-content-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .task-content-header h4 {
+            margin: 0;
+            color: #4a5568;
+            font-size: 1rem;
+        }
+        
+        .content-controls {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .btn-small {
+            background: #718096;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+        
+        .btn-small:hover {
+            background: #4a5568;
+        }
+        
+        .streaming-content {
+            background: #1a202c;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .streaming-placeholder {
+            color: #a0aec0;
+            font-style: italic;
+        }
+        
+        .streaming-chunk {
+            margin-bottom: 8px;
+            padding: 4px 0;
+        }
+        
+        .streaming-chunk.new {
+            background-color: #2d3748;
+            animation: highlight 1s ease;
+        }
+        
+        @keyframes highlight {
+            from { background-color: #4a5568; }
+            to { background-color: transparent; }
+        }
+        
+        .stream-timestamp {
+            color: #90cdf4;
+            font-size: 11px;
+            margin-right: 8px;
+        }
+        
+        /* 任务详情弹窗样式 */
+        .task-details-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+        
+        .task-details-modal.show {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .task-details-content {
+            background: white;
+            border-radius: 12px;
+            padding: 0;
+            max-width: 90vw;
+            max-height: 90vh;
+            width: 800px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            transform: translateY(20px);
+            transition: transform 0.3s ease;
+        }
+        
+        .task-details-modal.show .task-details-content {
+            transform: translateY(0);
+        }
+        
+        .task-details-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .task-details-header h3 {
+            margin: 0;
+            font-size: 1.3rem;
+            font-weight: 500;
+        }
+        
+        .task-details-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: background-color 0.2s ease;
+        }
+        
+        .task-details-close:hover {
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+        
+        .task-details-body {
+            padding: 25px;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        
+        .task-info-section {
+            margin-bottom: 25px;
+        }
+        
+        .task-info-section h4 {
+            color: #4a5568;
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .task-info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        
+        @media (max-width: 600px) {
+            .task-info-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .task-info-item {
+            background: #f7fafc;
+            padding: 12px;
+            border-radius: 6px;
+            border-left: 3px solid #667eea;
+        }
+        
+        .task-info-label {
+            font-weight: 500;
+            color: #4a5568;
+            font-size: 0.9rem;
+            margin-bottom: 4px;
+        }
+        
+        .task-info-value {
+            color: #2d3748;
+            font-family: 'Courier New', monospace;
+            font-size: 0.95rem;
+        }
+        
+        .task-content-display {
+            background: #1a202c;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .task-metadata-display {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .task-clickable {
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+        
+        .task-clickable:hover {
+            background-color: rgba(102, 126, 234, 0.05);
+        }
+        
+        .task-clickable .task-title {
+            color: #667eea;
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📄 Template Report Generation</h1>
+            <p>智能模板报告生成服务 - 支持并发执行和实时流式输出</p>
+            <span id="connectionStatus" class="connection-status disconnected">未连接</span>
+        </div>
+
+        <div class="grid">
+            <!-- Job Creation -->
+            <div class="card">
+                <h2>📋 创建新任务</h2>
+                
+                <div class="file-upload-area" id="templateUploadArea">
+                    <p>📁 点击或拖拽上传模板文件 (.md)</p>
+                    <input type="file" id="templateFile" accept=".md,.markdown" class="hidden">
+                </div>
+                
+                <form id="jobForm">
+                    <div class="form-group">
+                        <label for="templatePath">模板路径:</label>
+                        <input type="text" id="templatePath" placeholder="workdir/template/template.md" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="knowledgeBasePath">知识库路径:</label>
+                        <input type="text" id="knowledgeBasePath" value="workdir/documents" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="maxConcurrent">最大并发数:</label>
+                        <select id="maxConcurrent">
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3" selected>3</option>
+                            <option value="5">5</option>
+                            <option value="10">10</option>
+                        </select>
+                    </div>
+                    
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="enableStreaming" checked>
+                        <label for="enableStreaming">启用流式输出</label>
+                    </div>
+                    
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="enableModelMerge" checked>
+                        <label for="enableModelMerge">启用智能合并</label>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="reportTitle">报告标题 (可选):</label>
+                        <input type="text" id="reportTitle" placeholder="自动生成">
+                    </div>
+                    
+                    <button type="submit" class="btn" id="createJobBtn">
+                        <span id="createBtnText">创建任务</span>
+                        <span id="createBtnLoader" class="loading hidden"></span>
+                    </button>
+                </form>
+            </div>
+            
+            <!-- Job Control -->
+            <div class="card">
+                <h2>🎮 任务控制</h2>
+                
+                <div id="jobInfo" class="hidden">
+                    <div class="form-group">
+                        <label>任务ID:</label>
+                        <input type="text" id="currentJobId" readonly>
+                    </div>
+                    
+                    <div id="jobStatus" class="status-display"></div>
+                    
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="overallProgress" style="width: 0%"></div>
+                    </div>
+                    
+                    <div style="margin-top: 15px;">
+                        <button class="btn" id="startJobBtn" onclick="startJob()">开始执行</button>
+                        <button class="btn btn-secondary" id="refreshBtn" onclick="refreshStatus()">刷新状态</button>
+                        <button class="btn btn-danger" id="cancelJobBtn" onclick="cancelJob()">取消任务</button>
+                        <button class="btn btn-secondary" id="downloadBtn" onclick="downloadReport()" disabled>下载报告</button>
+                    </div>
+                </div>
+                
+                <div id="noJobMessage">
+                    <p>🔍 暂无活跃任务</p>
+                    <p>创建新任务开始使用服务</p>
+                </div>
+            </div>
+            
+            <!-- Task Queue -->
+            <div class="card full-width">
+                <h2>📋 任务队列</h2>
+                <div id="taskQueue">
+                    <p>暂无任务</p>
+                </div>
+            </div>
+            
+            <!-- Live Output -->
+            <div class="card full-width">
+                <h2>🔄 实时输出</h2>
+                <button class="btn btn-secondary" onclick="clearLogs()">清空日志</button>
+                <div id="liveOutput" class="log-output">
+                    <div class="log-entry">
+                        <span class="log-timestamp">[系统]</span> 
+                        <span class="log-info">等待任务开始...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 任务详情弹窗 -->
+    <div id="taskDetailsModal" class="task-details-modal">
+        <div class="task-details-content">
+            <div class="task-details-header">
+                <h3 id="taskDetailsTitle">任务详情</h3>
+                <button class="task-details-close" onclick="dashboard.closeTaskDetails()">×</button>
+            </div>
+            <div class="task-details-body">
+                <div class="task-info-section">
+                    <h4>📋 基本信息</h4>
+                    <div class="task-info-grid">
+                        <div class="task-info-item">
+                            <div class="task-info-label">任务ID</div>
+                            <div class="task-info-value" id="taskDetailId">-</div>
+                        </div>
+                        <div class="task-info-item">
+                            <div class="task-info-label">任务类型</div>
+                            <div class="task-info-value" id="taskDetailType">-</div>
+                        </div>
+                        <div class="task-info-item">
+                            <div class="task-info-label">状态</div>
+                            <div class="task-info-value" id="taskDetailStatus">-</div>
+                        </div>
+                        <div class="task-info-item">
+                            <div class="task-info-label">进度</div>
+                            <div class="task-info-value" id="taskDetailProgress">-</div>
+                        </div>
+                        <div class="task-info-item">
+                            <div class="task-info-label">内容长度</div>
+                            <div class="task-info-value" id="taskDetailContentLength">-</div>
+                        </div>
+                        <div class="task-info-item">
+                            <div class="task-info-label">层级</div>
+                            <div class="task-info-value" id="taskDetailLevel">-</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="task-info-section">
+                    <h4>📝 任务内容</h4>
+                    <div class="task-content-display" id="taskDetailContent">暂无内容</div>
+                </div>
+                
+                <div class="task-info-section">
+                    <h4>📊 元数据</h4>
+                    <div class="task-metadata-display" id="taskDetailMetadata">{}</div>
+                </div>
+                
+                <div class="task-info-section" id="taskDetailErrorSection" style="display: none;">
+                    <h4>❌ 错误信息</h4>
+                    <div style="background: #fed7d7; color: #742a2a; padding: 15px; border-radius: 6px;">
+                        <div id="taskDetailError"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class ReportDashboard {
+            constructor() {
+                this.currentJobId = null;
+                this.websocket = null;
+                this.isConnected = false;
+                this.lastProgressData = null; // Cache for progress data
+                // Try to use current origin, fallback to localhost:8082
+                this.baseUrl = window.location.origin.includes('808') ? 
+                              window.location.origin : 'http://localhost:8082';
+                this.websocketUrl = this.baseUrl.replace('http', 'ws');
+                
+                this.initEventListeners();
+                this.checkServiceStatus();
+            }
+            
+            initEventListeners() {
+                // Form submission
+                document.getElementById('jobForm').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.createJob();
+                });
+                
+                // File upload
+                const uploadArea = document.getElementById('templateUploadArea');
+                const fileInput = document.getElementById('templateFile');
+                
+                uploadArea.addEventListener('click', () => fileInput.click());
+                fileInput.addEventListener('change', (e) => this.handleFileUpload(e));
+                
+                // Drag and drop
+                uploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.add('dragover');
+                });
+                
+                uploadArea.addEventListener('dragleave', () => {
+                    uploadArea.classList.remove('dragover');
+                });
+                
+                uploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.remove('dragover');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        fileInput.files = files;
+                        this.handleFileUpload({target: {files}});
+                    }
+                });
+                
+                // Modal event listeners
+                const modal = document.getElementById('taskDetailsModal');
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) {
+                        this.closeTaskDetails();
+                    }
+                });
+                
+                // ESC key to close modal
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') {
+                        this.closeTaskDetails();
+                    }
+                });
+            }
+            
+            async checkServiceStatus() {
+                try {
+                    const response = await fetch(`${this.baseUrl}/health`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.addLog(`🟢 服务已连接: ${data.status}`, 'success');
+                        this.updateConnectionStatus(true);
+                    } else {
+                        this.addLog('🔴 服务响应异常', 'error');
+                        this.updateConnectionStatus(false);
+                    }
+                } catch (error) {
+                    this.addLog(`🔴 无法连接到服务: ${error.message}`, 'error');
+                    this.updateConnectionStatus(false);
+                }
+            }
+            
+            updateConnectionStatus(connected) {
+                const statusElement = document.getElementById('connectionStatus');
+                this.isConnected = connected;
+                
+                if (connected) {
+                    statusElement.textContent = '已连接';
+                    statusElement.className = 'connection-status connected';
+                } else {
+                    statusElement.textContent = '未连接';
+                    statusElement.className = 'connection-status disconnected';
+                }
+            }
+            
+            async handleFileUpload(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                
+                if (!file.name.endsWith('.md') && !file.name.endsWith('.markdown')) {
+                    alert('请选择 Markdown 文件 (.md 或 .markdown)');
+                    return;
+                }
+                
+                this.addLog(`📤 上传模板文件: ${file.name}`, 'info');
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                try {
+                    const response = await fetch(`${this.baseUrl}/upload-template`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok && result.status === 'success') {
+                        document.getElementById('templatePath').value = result.file_path;
+                        this.addLog(`✅ 模板上传成功: ${result.file_path}`, 'success');
+                    } else {
+                        this.addLog(`❌ 模板上传失败: ${result.message || '未知错误'}`, 'error');
+                    }
+                } catch (error) {
+                    this.addLog(`❌ 上传错误: ${error.message}`, 'error');
+                }
+            }
+            
+            async createJob() {
+                const templatePath = document.getElementById('templatePath').value;
+                if (!templatePath) {
+                    alert('请先上传模板文件');
+                    return;
+                }
+                
+                const createBtn = document.getElementById('createJobBtn');
+                const createBtnText = document.getElementById('createBtnText');
+                const createBtnLoader = document.getElementById('createBtnLoader');
+                
+                // Show loading state
+                createBtn.disabled = true;
+                createBtnText.classList.add('hidden');
+                createBtnLoader.classList.remove('hidden');
+                
+                const jobData = {
+                    template_path: templatePath,
+                    knowledge_base_path: document.getElementById('knowledgeBasePath').value,
+                    max_concurrent: parseInt(document.getElementById('maxConcurrent').value),
+                    enable_streaming: document.getElementById('enableStreaming').checked,
+                    enable_model_merge: document.getElementById('enableModelMerge').checked,
+                    report_title: document.getElementById('reportTitle').value || null
+                };
+                
+                try {
+                    this.addLog('📋 创建新任务...', 'info');
+                    
+                    const response = await fetch(`${this.baseUrl}/jobs`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(jobData)
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok && result.status === 'created') {
+                        this.currentJobId = result.job_id;
+                        document.getElementById('currentJobId').value = this.currentJobId;
+                        
+                        this.addLog(`✅ 任务创建成功: ${this.currentJobId}`, 'success');
+                        this.showJobInfo();
+                        this.updateJobStatus(result);
+                        
+                        // Connect to WebSocket if streaming enabled
+                        if (jobData.enable_streaming) {
+                            this.connectWebSocket();
+                        }
+                        
+                    } else {
+                        this.addLog(`❌ 任务创建失败: ${result.message}`, 'error');
+                    }
+                } catch (error) {
+                    this.addLog(`❌ 创建任务时出错: ${error.message}`, 'error');
+                } finally {
+                    // Restore button state
+                    createBtn.disabled = false;
+                    createBtnText.classList.remove('hidden');
+                    createBtnLoader.classList.add('hidden');
+                }
+            }
+            
+            showJobInfo() {
+                document.getElementById('jobInfo').classList.remove('hidden');
+                document.getElementById('noJobMessage').classList.add('hidden');
+            }
+            
+            connectWebSocket() {
+                if (!this.currentJobId || this.websocket) return;
+                
+                const wsUrl = `${this.websocketUrl}/ws/${this.currentJobId}`;
+                this.addLog(`🔗 连接 WebSocket: ${wsUrl}`, 'info');
+                
+                try {
+                    this.websocket = new WebSocket(wsUrl);
+                    
+                    this.websocket.onopen = () => {
+                        this.addLog('📡 WebSocket 连接已建立', 'success');
+                    };
+                    
+                    this.websocket.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            this.handleWebSocketMessage(data);
+                        } catch (error) {
+                            this.addLog(`❌ WebSocket 消息解析错误: ${error.message}`, 'error');
+                        }
+                    };
+                    
+                    this.websocket.onclose = () => {
+                        this.addLog('📡 WebSocket 连接已断开', 'warning');
+                        this.websocket = null;
+                    };
+                    
+                    this.websocket.onerror = (error) => {
+                        this.addLog(`❌ WebSocket 错误: ${error}`, 'error');
+                    };
+                    
+                    // Keep alive
+                    setInterval(() => {
+                        if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                            this.websocket.send(JSON.stringify({type: 'ping'}));
+                        }
+                    }, 30000);
+                    
+                } catch (error) {
+                    this.addLog(`❌ WebSocket 连接失败: ${error.message}`, 'error');
+                }
+            }
+            
+            handleWebSocketMessage(data) {
+                const type = data.type;
+                const timestamp = new Date().toLocaleTimeString();
+                
+                console.log('WebSocket message received:', data); // Debug log
+                
+                switch(type) {
+                    case 'stream_message':
+                        this.handleStreamMessage(data.message);
+                        break;
+                    case 'connection_established':
+                        this.addLog(`🔗 连接已建立: ${data.connection_id}`, 'success');
+                        break;
+                    case 'status_update':
+                        this.updateJobStatus(data.job_status);
+                        break;
+                    case 'pong':
+                        console.log('Pong received'); // Debug log
+                        break;
+                    case 'error':
+                        this.addLog(`❌ WebSocket错误: ${data.message}`, 'error');
+                        break;
+                    default:
+                        this.addLog(`📨 收到消息: ${type}`, 'info');
+                        console.log('Unknown message type:', type, data);
+                }
+            }
+            
+            handleStreamMessage(message) {
+                const content = message.content;
+                const taskId = message.task_id;
+                const messageType = message.message_type;
+                const timestamp = new Date(message.timestamp).toLocaleTimeString();
+                
+                // Update streaming content display for task-specific messages
+                if (taskId && ['task_start', 'task_progress', 'task_content', 'task_complete', 'task_error'].includes(messageType)) {
+                    this.updateStreamingContent(taskId, content, messageType);
+                }
+                
+                switch(messageType) {
+                    case 'task_start':
+                        this.addLog(`🔧 任务开始: ${content.task_title}`, 'info');
+                        break;
+                    case 'task_progress':
+                        this.addLog(`📊 进度更新: ${content.progress}% (${content.status})`, 'info');
+                        break;
+                    case 'task_content':
+                        this.addLog(`📝 内容已生成 (${String(content).length} 字符)`, 'success');
+                        break;
+                    case 'task_complete':
+                        this.addLog(`✅ 任务完成: ${content.task_title}`, 'success');
+                        break;
+                    case 'task_error':
+                        this.addLog(`❌ 任务错误: ${content.task_title} - ${content.error}`, 'error');
+                        break;
+                    case 'job_progress':
+                        if (content.progress) {
+                            this.updateProgress(content.progress);
+                        }
+                        break;
+                    case 'job_complete':
+                        this.addLog(`🎉 任务全部完成! 报告: ${content.report_path}`, 'success');
+                        this.enableDownload();
+                        break;
+                    case 'job_error':
+                        this.addLog(`❌ 任务失败: ${content.error || content.message}`, 'error');
+                        break;
+                }
+                
+                // Refresh status after each message to update task queue
+                setTimeout(() => this.refreshStatus(), 100);
+            }
+            
+            updateJobStatus(jobStatus) {
+                const statusDiv = document.getElementById('jobStatus');
+                const status = jobStatus.status;
+                
+                statusDiv.className = `status-display status-${status}`;
+                statusDiv.textContent = `状态: ${this.getStatusText(status)} - ${jobStatus.message}`;
+                
+                if (status === 'completed') {
+                    this.enableDownload();
+                }
+            }
+            
+            updateProgress(progress) {
+                const progressBar = document.getElementById('overallProgress');
+                const percentage = progress.overall_progress || 0;
+                
+                progressBar.style.width = `${percentage}%`;
+                
+                // Cache progress data for task details fallback
+                this.lastProgressData = progress;
+                
+                // Update task queue
+                this.updateTaskQueue(progress.tasks || []);
+            }
+            
+            updateTaskQueue(tasks) {
+                const queueDiv = document.getElementById('taskQueue');
+                
+                if (tasks.length === 0) {
+                    queueDiv.innerHTML = '<p>暂无任务</p>';
+                    return;
+                }
+                
+                queueDiv.innerHTML = tasks.map(task => `
+                    <div class="task-item task-${task.status} task-clickable" id="task-${task.task_id}" onclick="dashboard.showTaskDetails('${task.task_id}')">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <button class="expand-btn" onclick="event.stopPropagation(); dashboard.toggleTaskContent('${task.task_id}')" 
+                                        title="展开/收起流式内容">
+                                    <span id="expand-icon-${task.task_id}">📄</span>
+                                </button>
+                                <strong class="task-title">${task.title}</strong>
+                                <span style="font-size: 0.8em; color: #666;" title="点击查看任务详情">🔍</span>
+                            </div>
+                            <span class="status-badge status-${task.status}">${this.getStatusText(task.status)}</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${task.progress}%"></div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.9em; color: #666; margin-bottom: 10px;">
+                            <span>进度: ${task.progress.toFixed(1)}%</span>
+                            <span>内容长度: ${task.content_length} 字符</span>
+                        </div>
+                        ${task.error_message ? `<div style="color: #e53e3e; font-size: 0.9em; margin-top: 5px;">${task.error_message}</div>` : ''}
+                        
+                        <!-- 可展开的流式内容区域 -->
+                        <div class="task-content-area" id="content-${task.task_id}" style="display: none;">
+                            <div class="task-content-header">
+                                <h4>🤖 智能体输出</h4>
+                                <div class="content-controls">
+                                    <button class="btn-small" onclick="dashboard.clearTaskContent('${task.task_id}')">清空</button>
+                                    <button class="btn-small" onclick="dashboard.copyTaskContent('${task.task_id}')">复制</button>
+                                </div>
+                            </div>
+                            <div class="streaming-content" id="streaming-${task.task_id}">
+                                <div class="streaming-placeholder">等待智能体开始生成内容...</div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+            
+            getStatusText(status) {
+                const statusMap = {
+                    'pending': '等待中',
+                    'ready': '就绪',
+                    'running': '运行中',
+                    'streaming': '流式输出',
+                    'completed': '已完成',
+                    'failed': '失败',
+                    'cancelled': '已取消'
+                };
+                return statusMap[status] || status;
+            }
+            
+            async refreshStatus() {
+                if (!this.currentJobId) return;
+                
+                try {
+                    // Get job status
+                    const statusResponse = await fetch(`${this.baseUrl}/jobs/${this.currentJobId}/status`);
+                    if (statusResponse.ok) {
+                        const statusData = await statusResponse.json();
+                        this.updateJobStatus(statusData);
+                    }
+                    
+                    // Get progress
+                    const progressResponse = await fetch(`${this.baseUrl}/jobs/${this.currentJobId}/progress`);
+                    if (progressResponse.ok) {
+                        const progressData = await progressResponse.json();
+                        this.updateProgress(progressData);
+                    }
+                } catch (error) {
+                    this.addLog(`❌ 刷新状态失败: ${error.message}`, 'error');
+                }
+            }
+            
+            enableDownload() {
+                const downloadBtn = document.getElementById('downloadBtn');
+                downloadBtn.disabled = false;
+                downloadBtn.textContent = '下载报告';
+            }
+            
+            addLog(message, type = 'info') {
+                const output = document.getElementById('liveOutput');
+                const timestamp = new Date().toLocaleTimeString();
+                
+                const logEntry = document.createElement('div');
+                logEntry.className = 'log-entry';
+                logEntry.innerHTML = `
+                    <span class="log-timestamp">[${timestamp}]</span>
+                    <span class="log-${type}">${message}</span>
+                `;
+                
+                output.appendChild(logEntry);
+                output.scrollTop = output.scrollHeight;
+            }
+        }
+        
+        // Global functions for buttons
+        async function startJob() {
+            if (!dashboard.currentJobId) return;
+            
+            try {
+                const response = await fetch(`${dashboard.baseUrl}/jobs/${dashboard.currentJobId}/start`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    dashboard.addLog(`▶️ 任务已开始执行`, 'success');
+                    dashboard.updateJobStatus(result);
+                } else {
+                    dashboard.addLog(`❌ 启动失败: ${result.message}`, 'error');
+                }
+            } catch (error) {
+                dashboard.addLog(`❌ 启动错误: ${error.message}`, 'error');
+            }
+        }
+        
+        function refreshStatus() {
+            dashboard.refreshStatus();
+        }
+        
+        async function cancelJob() {
+            if (!dashboard.currentJobId) return;
+            
+            if (!confirm('确定要取消当前任务吗？')) return;
+            
+            try {
+                const response = await fetch(`${dashboard.baseUrl}/jobs/${dashboard.currentJobId}/cancel`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    dashboard.addLog(`🛑 任务已取消`, 'warning');
+                    dashboard.updateJobStatus(result);
+                } else {
+                    dashboard.addLog(`❌ 取消失败: ${result.message}`, 'error');
+                }
+            } catch (error) {
+                dashboard.addLog(`❌ 取消错误: ${error.message}`, 'error');
+            }
+        }
+        
+        async function downloadReport() {
+            if (!dashboard.currentJobId) return;
+            
+            try {
+                const response = await fetch(`${dashboard.baseUrl}/jobs/${dashboard.currentJobId}/report`);
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `report_${dashboard.currentJobId.substring(0, 8)}.md`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                    
+                    dashboard.addLog('📁 报告下载成功', 'success');
+                } else {
+                    dashboard.addLog('❌ 报告下载失败', 'error');
+                }
+            } catch (error) {
+                dashboard.addLog(`❌ 下载错误: ${error.message}`, 'error');
+            }
+        }
+        
+        function clearLogs() {
+            const output = document.getElementById('liveOutput');
+            output.innerHTML = `
+                <div class="log-entry">
+                    <span class="log-timestamp">[系统]</span> 
+                    <span class="log-info">日志已清空</span>
+                </div>
+            `;
+        }
+        
+        // Task content expansion/collapse methods
+        ReportDashboard.prototype.toggleTaskContent = function(taskId) {
+            const contentArea = document.getElementById(`content-${taskId}`);
+            const expandIcon = document.getElementById(`expand-icon-${taskId}`);
+            
+            if (contentArea.style.display === 'none' || contentArea.style.display === '') {
+                contentArea.style.display = 'block';
+                expandIcon.textContent = '📖'; // Open book icon
+            } else {
+                contentArea.style.display = 'none';
+                expandIcon.textContent = '📄'; // Closed document icon
+            }
+        };
+        
+        ReportDashboard.prototype.clearTaskContent = function(taskId) {
+            const streamingContent = document.getElementById(`streaming-${taskId}`);
+            if (streamingContent) {
+                streamingContent.innerHTML = '<div class="streaming-placeholder">内容已清空</div>';
+            }
+        };
+        
+        ReportDashboard.prototype.copyTaskContent = function(taskId) {
+            const streamingContent = document.getElementById(`streaming-${taskId}`);
+            if (streamingContent) {
+                const textContent = streamingContent.innerText || streamingContent.textContent || '';
+                if (textContent.trim() && textContent !== '等待智能体开始生成内容...' && textContent !== '内容已清空') {
+                    navigator.clipboard.writeText(textContent).then(() => {
+                        // Visual feedback for successful copy
+                        const originalHTML = streamingContent.innerHTML;
+                        streamingContent.innerHTML = '<div style="color: #68d391; font-style: italic;">已复制到剪贴板 ✓</div>';
+                        setTimeout(() => {
+                            streamingContent.innerHTML = originalHTML;
+                        }, 1500);
+                    }).catch(err => {
+                        console.error('复制失败:', err);
+                        alert('复制失败，请手动选择并复制内容');
+                    });
+                } else {
+                    alert('暂无内容可复制');
+                }
+            }
+        };
+        
+        ReportDashboard.prototype.updateStreamingContent = function(taskId, content, messageType) {
+            const streamingDiv = document.getElementById(`streaming-${taskId}`);
+            if (!streamingDiv) return;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            
+            // Remove placeholder if it exists
+            const placeholder = streamingDiv.querySelector('.streaming-placeholder');
+            if (placeholder) {
+                placeholder.remove();
+            }
+            
+            // Create content chunk
+            const chunk = document.createElement('div');
+            chunk.className = 'streaming-chunk new';
+            
+            // Format content based on message type
+            let formattedContent = '';
+            switch(messageType) {
+                case 'task_start':
+                    formattedContent = `🚀 [${timestamp}] 任务开始: ${content.task_title || content}`;
+                    break;
+                case 'task_progress':
+                    formattedContent = `📊 [${timestamp}] 进度: ${content.progress || content}%`;
+                    break;
+                case 'task_content':
+                    formattedContent = `📝 [${timestamp}] 生成内容:\n${typeof content === 'string' ? content : JSON.stringify(content, null, 2)}`;
+                    break;
+                case 'task_complete':
+                    formattedContent = `✅ [${timestamp}] 任务完成: ${content.task_title || content}`;
+                    break;
+                case 'task_error':
+                    formattedContent = `❌ [${timestamp}] 错误: ${content.error || content}`;
+                    chunk.style.color = '#feb2b2';
+                    break;
+                default:
+                    formattedContent = `💬 [${timestamp}] ${typeof content === 'string' ? content : JSON.stringify(content, null, 2)}`;
+            }
+            
+            chunk.textContent = formattedContent;
+            streamingDiv.appendChild(chunk);
+            
+            // Remove 'new' class after animation
+            setTimeout(() => {
+                chunk.classList.remove('new');
+            }, 1000);
+            
+            // Auto-scroll to bottom
+            streamingDiv.scrollTop = streamingDiv.scrollHeight;
+            
+            // Limit content length to prevent memory issues
+            const maxChunks = 100;
+            const chunks = streamingDiv.querySelectorAll('.streaming-chunk');
+            if (chunks.length > maxChunks) {
+                chunks[0].remove();
+            }
+        };
+        
+        // Task details modal methods
+        ReportDashboard.prototype.showTaskDetails = async function(taskId) {
+            try {
+                // Get detailed task information from API
+                const response = await fetch(`${this.baseUrl}/jobs/${this.currentJobId}/tasks/${taskId}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const taskData = await response.json();
+                this.displayTaskDetails(taskData);
+                
+            } catch (error) {
+                console.error('Error fetching task details:', error);
+                // Fallback to basic task info from current progress data
+                this.displayTaskDetailsFromCache(taskId);
+            }
+        };
+        
+        ReportDashboard.prototype.displayTaskDetails = function(taskData) {
+            // Update modal content with full task data
+            document.getElementById('taskDetailsTitle').textContent = `任务详情 - ${taskData.title || taskData.task_id}`;
+            document.getElementById('taskDetailId').textContent = taskData.task_id || '-';
+            document.getElementById('taskDetailType').textContent = taskData.task_type || '-';
+            document.getElementById('taskDetailStatus').textContent = this.getStatusText(taskData.status || 'unknown');
+            document.getElementById('taskDetailProgress').textContent = `${(taskData.progress || 0).toFixed(1)}%`;
+            document.getElementById('taskDetailContentLength').textContent = `${taskData.content_length || 0} 字符`;
+            document.getElementById('taskDetailLevel').textContent = taskData.level || '-';
+            
+            // Display content
+            const contentDiv = document.getElementById('taskDetailContent');
+            if (taskData.content && taskData.content.trim()) {
+                contentDiv.textContent = taskData.content;
+            } else {
+                contentDiv.textContent = '暂无内容';
+                contentDiv.style.fontStyle = 'italic';
+                contentDiv.style.color = '#a0aec0';
+            }
+            
+            // Display metadata
+            const metadataDiv = document.getElementById('taskDetailMetadata');
+            if (taskData.metadata && typeof taskData.metadata === 'object') {
+                metadataDiv.textContent = JSON.stringify(taskData.metadata, null, 2);
+            } else {
+                metadataDiv.textContent = '{}';
+            }
+            
+            // Display error if exists
+            const errorSection = document.getElementById('taskDetailErrorSection');
+            const errorDiv = document.getElementById('taskDetailError');
+            if (taskData.error_message && taskData.error_message.trim()) {
+                errorDiv.textContent = taskData.error_message;
+                errorSection.style.display = 'block';
+            } else {
+                errorSection.style.display = 'none';
+            }
+            
+            // Show modal
+            const modal = document.getElementById('taskDetailsModal');
+            modal.classList.add('show');
+        };
+        
+        ReportDashboard.prototype.displayTaskDetailsFromCache = function(taskId) {
+            // Fallback method using cached progress data
+            const jobId = this.currentJobId;
+            if (!jobId) return;
+            
+            // Try to find task in current progress data
+            const progressData = this.lastProgressData;
+            let taskInfo = null;
+            
+            if (progressData && progressData.tasks) {
+                taskInfo = progressData.tasks.find(t => t.task_id === taskId);
+            }
+            
+            if (taskInfo) {
+                this.displayTaskDetails(taskInfo);
+            } else {
+                // Show modal with minimal info
+                document.getElementById('taskDetailsTitle').textContent = '任务详情';
+                document.getElementById('taskDetailId').textContent = taskId;
+                document.getElementById('taskDetailType').textContent = '未知';
+                document.getElementById('taskDetailStatus').textContent = '未知';
+                document.getElementById('taskDetailProgress').textContent = '0%';
+                document.getElementById('taskDetailContentLength').textContent = '0 字符';
+                document.getElementById('taskDetailLevel').textContent = '-';
+                
+                document.getElementById('taskDetailContent').textContent = '无法获取任务详情，请稍后重试';
+                document.getElementById('taskDetailMetadata').textContent = '{}';
+                document.getElementById('taskDetailErrorSection').style.display = 'none';
+                
+                const modal = document.getElementById('taskDetailsModal');
+                modal.classList.add('show');
+            }
+        };
+        
+        ReportDashboard.prototype.closeTaskDetails = function() {
+            const modal = document.getElementById('taskDetailsModal');
+            modal.classList.remove('show');
+        };
+
+        // Initialize dashboard when page loads
+        let dashboard;
+        window.addEventListener('load', () => {
+            dashboard = new ReportDashboard();
+        });
+    </script>
+</body>
+</html>

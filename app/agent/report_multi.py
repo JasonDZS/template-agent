@@ -17,11 +17,12 @@ from .base import BaseAgent
 from .section_agent_react import SectionAgentReAct
 from .section_agent import SectionAgent
 from ..config import settings
-from ..tool.knowledge_retrieval import KnowledgeRetrievalTool
+from ..tool.knowledge_retrieval import get_knowledge_retrieval_tool
 from ..converter import MarkdownConverter, ConversionRequest
 from ..schema import AgentState
 from ..logger import logger
 from ..prompt import report_multi as prompts
+from ..template import create_task_schedule, TaskType, TaskStatus
 
 
 class ReportGeneratorAgent(BaseAgent):
@@ -80,12 +81,16 @@ class ReportGeneratorAgent(BaseAgent):
         self.max_concurrent = max_concurrent
         
         # Initialize tools
-        self.knowledge_tool = KnowledgeRetrievalTool(knowledge_base_path)
+        self.knowledge_tool = get_knowledge_retrieval_tool(knowledge_base_path)
         self.converter = MarkdownConverter()
         
         # Report template and content
         self.template_structure = None
         self.report_content = {}
+        
+        # Task scheduling system
+        self.task_schedule = None
+        self.use_schedule_mode = False
         
         # Section agent management
         self.section_agents: List[SectionAgent | SectionAgentReAct] = []
@@ -148,12 +153,58 @@ class ReportGeneratorAgent(BaseAgent):
             logger.error(f"Template initialization failed: {e}")
             raise
     
+    async def initialize_from_schedule(self, template_path: str, confirm_execution: bool = True):
+        """
+        Initialize the agent using task schedule system.
+        
+        This method creates a task schedule from the template, displays the task queue
+        for user confirmation, and sets up agents for each task.
+        
+        Args:
+            template_path (str): Path to the template file
+            confirm_execution (bool): Whether to ask for user confirmation before execution
+            
+        Raises:
+            ValueError: If task schedule creation fails
+            Exception: If schedule initialization fails
+        """
+        try:
+            logger.info(f"Initializing task schedule from template: {template_path}")
+            
+            # Create task schedule
+            self.task_schedule = create_task_schedule(
+                template_path, 
+                max_concurrent=self.max_concurrent
+            )
+            self.use_schedule_mode = True
+            
+            # Display task queue information
+            self._display_task_queue()
+            
+            # Ask for user confirmation if needed
+            if confirm_execution:
+                confirmed = self._ask_user_confirmation()
+                if not confirmed:
+                    logger.info("User cancelled task execution")
+                    return False
+            
+            # Initialize report structure from schedule
+            self._initialize_from_task_schedule()
+            
+            logger.info(f"Task schedule initialization completed with {len(self.task_schedule.tasks)} tasks")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Task schedule initialization failed: {e}")
+            raise
+    
     def _initialize_report_structure(self):
         """
         Initialize report content structure and section agents.
         
         This method creates the basic report structure and instantiates
         the appropriate section agents for each heading in the template.
+        Only creates agents for top-level headings (not contained within other headings).
         """
         self.report_content = {
             "title": self.template_structure.get("title", "Report"),
@@ -167,36 +218,318 @@ class ReportGeneratorAgent(BaseAgent):
             "metadata": self.report_content["metadata"]
         }
         
-        for element in self.template_structure.get("content", []):
+        # Extract all headings recursively from the hierarchical structure
+        all_headings = []
+        self._extract_all_headings(self.template_structure.get("content", []), all_headings)
+        
+        # Find leaf headings (those without child headings)
+        leaf_headings = self._find_leaf_headings(all_headings)
+        
+        # Create sections and agents only for leaf headings
+        for heading_info in leaf_headings:
+            element = heading_info["element"]
+            section = {
+                "type": "heading",
+                "level": element.get("level", 1),
+                "content": element.get("content", ""),
+                "id": len(self.report_content["content"]),
+                "completed": False,
+                "generated_content": ""
+            }
+            self.report_content["content"].append(section)
+            
+            # Create dedicated SectionAgent for each top-level section
+            section_title = section.get("content", f"Section {section['id']}")
+            
+            # Extract children_content from template element for output format
+            output_format = None
+            element_attributes = element.get("attributes", {})
+            if element_attributes and "children_content" in element_attributes:
+                output_format = element_attributes["children_content"]
+            
+            if settings.section_agent_react:
+                section_agent = SectionAgentReAct(
+                    # name=f"section_agent_{section['id']}",
+                    section_info=section,
+                    report_context=report_context,
+                    knowledge_base_path=self.knowledge_base_path,
+                    output_format=output_format,
+                    llm=self.llm
+                )
+            else:
+                section_agent = SectionAgent(
+                    name=f"section_agent_{section['id']}",
+                    section_info=section,
+                    report_context=report_context,
+                    knowledge_base_path=self.knowledge_base_path,
+                )
+            self.section_agents.append(section_agent)
+    
+    def _find_leaf_headings(self, all_headings: List[Dict]) -> List[Dict]:
+        """
+        Find leaf headings that have no child headings under them.
+        
+        A heading is considered a leaf if it has no children_content with headings.
+        
+        Args:
+            all_headings: List of all heading elements with their metadata
+            
+        Returns:
+            List of leaf headings that should have agents created
+        """
+        if not all_headings:
+            return []
+        
+        leaf_headings = []
+        
+        for heading in all_headings:
+            element = heading["element"]
+            element_attributes = element.get("attributes", {})
+            
+            # Check if this heading has child headings
+            has_child_headings = False
+            if element_attributes and "children_content" in element_attributes:
+                children_content = element_attributes["children_content"]
+                if children_content:
+                    # Check if any child element is a heading
+                    for child in children_content:
+                        if child.get("type") == "heading":
+                            has_child_headings = True
+                            break
+            
+            # If no child headings, this is a leaf
+            if not has_child_headings:
+                leaf_headings.append(heading)
+        
+        logger.info(f"Found {len(leaf_headings)} leaf headings")
+        for heading in leaf_headings:
+            logger.info(f"  - {heading['content']} (level {heading['level']})")
+        
+        return leaf_headings
+    
+    def _extract_all_headings(self, content_list: List[Dict], all_headings: List[Dict], parent_index: int = 0) -> None:
+        """
+        Recursively extract all headings from the hierarchical structure.
+        
+        Args:
+            content_list: List of content elements to process
+            all_headings: List to collect all found headings
+            parent_index: Index offset for tracking position
+        """
+        for i, element in enumerate(content_list):
             if element.get("type") == "heading":
-                section = {
-                    "type": "heading",
-                    "level": element.get("level", 1),
-                    "content": element.get("content", ""),
-                    "id": len(self.report_content["content"]),
-                    "completed": False,
-                    "generated_content": ""
-                }
-                self.report_content["content"].append(section)
+                # Get level from attributes or direct level field
+                level = element.get("level", 1)
+                if "attributes" in element and element["attributes"]:
+                    level = element["attributes"].get("level", level)
                 
-                # Create dedicated SectionAgent for each section
-                section_title = section.get("content", f"Section {section['id']}")
-                if settings.section_agent_react:
-                    section_agent = SectionAgentReAct(
-                        # name=f"section_agent_{section['id']}",
-                        section_info=section,
-                        report_context=report_context,
-                        knowledge_base_path=self.knowledge_base_path,
-                        llm=self.llm
-                    )
+                heading_info = {
+                    "index": parent_index + i,
+                    "element": element,
+                    "level": level,
+                    "content": element.get("content", "")
+                }
+                all_headings.append(heading_info)
+                
+                # Recursively extract headings from children_content
+                element_attributes = element.get("attributes", {})
+                if element_attributes and "children_content" in element_attributes:
+                    children_content = element_attributes["children_content"]
+                    if children_content:
+                        self._extract_all_headings(children_content, all_headings, parent_index + i + 1)
+    
+    def _display_task_queue(self):
+        """Display task queue information to console."""
+        if not self.task_schedule:
+            return
+        
+        print("\n" + "="*80)
+        print(f"📋 Task Queue - {self.task_schedule.document.title}")
+        print("="*80)
+        
+        # Get task graph info
+        graph_info = self.task_schedule.get_task_graph_info()
+        
+        print(f"\n📊 Task Statistics:")
+        print(f"   Total tasks: {graph_info['total_tasks']}")
+        print(f"   Generation tasks: {graph_info['generation_tasks']}")
+        print(f"   Merge tasks: {graph_info['merge_tasks']}")
+        print(f"   Max concurrent: {self.max_concurrent}")
+        
+        print(f"\n📈 Task Distribution by Level:")
+        for level, counts in graph_info['tasks_by_level'].items():
+            total = counts['generation'] + counts['merge']
+            print(f"   Level {level}: Generation({counts['generation']}) + Merge({counts['merge']}) = {total}")
+        
+        print("\n" + "-"*80)
+        print("🔍 Task Details and Agents:")
+        print("-"*80)
+        
+        # Group tasks by level
+        tasks_by_level = {}
+        for task in self.task_schedule.tasks.values():
+            level = task.level
+            if level not in tasks_by_level:
+                tasks_by_level[level] = []
+            tasks_by_level[level].append(task)
+        
+        # Display tasks by level
+        for level in sorted(tasks_by_level.keys()):
+            tasks = tasks_by_level[level]
+            print(f"\n🏷️  Level {level} ({len(tasks)} tasks)")
+            print("-" * 60)
+            
+            for i, task in enumerate(tasks, 1):
+                task_type_icon = "🔧" if task.task_type == TaskType.GENERATION else "🔀"
+                agent_type = "SectionAgentReAct (Generation)" if task.task_type == TaskType.GENERATION else "SectionAgentReAct (Merge)"
+                
+                print(f"   {i:2d}. {task_type_icon} {task.title}")
+                print(f"       Agent: {agent_type}")
+                print(f"       Task Type: {task.task_type.value}")
+                print(f"       Dependencies: {len(task.dependencies)}")
+                print(f"       Estimated Duration: {task.estimated_duration}s")
+                
+                if task.dependencies:
+                    print(f"       Depends on:")
+                    for dep_id in task.dependencies:
+                        dep_task = self.task_schedule.tasks.get(dep_id)
+                        if dep_task:
+                            print(f"         - {dep_task.title} ({dep_task.task_type.value})")
+                print()
+        
+        # Show execution sequence preview
+        self._display_execution_preview()
+    
+    def _display_execution_preview(self):
+        """Display execution sequence preview."""
+        if not self.task_schedule:
+            return
+        
+        print("\n" + "-"*80)
+        print("⚡ Execution Sequence Preview")
+        print("-"*80)
+        
+        # Simulate task execution order (simplified version)
+        completed_tasks = set()
+        execution_rounds = []
+        max_rounds = 20
+        
+        for round_num in range(max_rounds):
+            ready_tasks = []
+            for task in self.task_schedule.tasks.values():
+                if (task.id not in completed_tasks and 
+                    set(task.dependencies).issubset(completed_tasks)):
+                    ready_tasks.append(task)
+            
+            if not ready_tasks:
+                break
+            
+            # Sort by priority and limit to max concurrent
+            ready_tasks.sort(key=lambda t: (-t.priority, t.level if t.task_type == TaskType.GENERATION else -t.level))
+            ready_tasks = ready_tasks[:self.max_concurrent]
+            
+            execution_rounds.append(ready_tasks)
+            
+            for task in ready_tasks:
+                completed_tasks.add(task.id)
+        
+        print(f"\n🚀 Estimated execution rounds: {len(execution_rounds)}")
+        print(f"📊 Total tasks: {len(self.task_schedule.tasks)}")
+        
+        for round_num, tasks in enumerate(execution_rounds[:5], 1):  # Show first 5 rounds
+            print(f"\nRound {round_num} - Parallel execution ({len(tasks)} tasks):")
+            for i, task in enumerate(tasks, 1):
+                task_type = "Generation" if task.task_type == TaskType.GENERATION else "Merge"
+                print(f"   {i:2d}. [{task_type}] {task.title} (Level {task.level})")
+        
+        if len(execution_rounds) > 5:
+            print(f"\n   ... and {len(execution_rounds) - 5} more rounds")
+        
+        print(f"\n✅ All tasks will complete in {len(execution_rounds)} rounds")
+    
+    def _ask_user_confirmation(self) -> bool:
+        """Ask user for confirmation to proceed with task execution."""
+        print("\n" + "="*80)
+        print("❓ User Confirmation Required")
+        print("="*80)
+        print("\nThe task queue is ready for execution.")
+        print("This will create and run multiple agents to generate report content.")
+        print(f"Estimated total duration: {sum(t.estimated_duration for t in self.task_schedule.tasks.values()):.1f}s")
+        
+        while True:
+            try:
+                response = input("\nDo you want to proceed with execution? (y/n): ").strip().lower()
+                if response in ['y', 'yes']:
+                    print("✅ User confirmed. Starting task execution...")
+                    return True
+                elif response in ['n', 'no']:
+                    print("❌ User cancelled task execution.")
+                    return False
                 else:
-                    section_agent = SectionAgent(
-                        name=f"section_agent_{section['id']}",
-                        section_info=section,
-                        report_context=report_context,
-                        knowledge_base_path=self.knowledge_base_path,
-                    )
-                self.section_agents.append(section_agent)
+                    print("Please enter 'y' for yes or 'n' for no.")
+            except KeyboardInterrupt:
+                print("\n❌ User cancelled with Ctrl+C.")
+                return False
+            except Exception:
+                print("Invalid input. Please enter 'y' for yes or 'n' for no.")
+    
+    def _initialize_from_task_schedule(self):
+        """Initialize report structure and agents from task schedule."""
+        if not self.task_schedule:
+            return
+        
+        self.report_content = {
+            "title": self.task_schedule.document.title,
+            "metadata": {},
+            "content": []
+        }
+        
+        report_context = {
+            "title": self.report_content["title"],
+            "metadata": self.report_content["metadata"]
+        }
+        
+        # Create agents for each task
+        for task_id, task in self.task_schedule.tasks.items():
+            # Create section info from task
+            section = {
+                "type": "heading",
+                "level": task.level,
+                "content": task.title,
+                "id": len(self.report_content["content"]),
+                "completed": False,
+                "generated_content": "",
+                "task_id": task_id  # Link to schedule task
+            }
+            self.report_content["content"].append(section)
+            
+            # Determine task type for agent
+            agent_task_type = task.task_type
+
+            # Create section agent with appropriate task type
+            if settings.section_agent_react:
+                section_agent = SectionAgentReAct(
+                    section_info=section,
+                    report_context=report_context,
+                    knowledge_base_path=self.knowledge_base_path,
+                    output_format=task.section_content,  # Use task content as output format
+                    task_type=agent_task_type,
+                    llm=self.llm
+                )
+            else:
+                section_agent = SectionAgent(
+                    name=f"section_agent_{section['id']}",
+                    section_info=section,
+                    report_context=report_context,
+                    knowledge_base_path=self.knowledge_base_path,
+                    task_type=agent_task_type,
+                    output_format=task.section_content  # Use task content as output format
+                )
+            
+            self.section_agents.append(section_agent)
+            logger.info(f"Created {agent_task_type.value} agent for task: {task.title}")
+        
+        logger.info(f"Initialized {len(self.section_agents)} agents from task schedule")
     
     async def step(self) -> str:
         """
@@ -786,4 +1119,42 @@ class ReportGeneratorAgent(BaseAgent):
             
         except Exception as e:
             logger.error(f"Template running failed: {e}")
+            raise
+    
+    async def run_with_schedule(self, template_path: str, output_path: Optional[str] = None,
+                               confirm_execution: bool = True) -> str:
+        """
+        Run the agent with schedule-based task management.
+        
+        This method uses the task scheduling system to coordinate report generation
+        with proper dependency management and task type specialization.
+        
+        Args:
+            template_path (str): Path to the template file to use
+            output_path (Optional[str]): Path where the generated report will be saved
+            confirm_execution (bool): Whether to ask for user confirmation before execution
+            
+        Returns:
+            str: Result message from the agent execution
+            
+        Raises:
+            Exception: If schedule-based running fails
+        """
+        try:
+            # Initialize from schedule
+            confirmed = await self.initialize_from_schedule(template_path, confirm_execution)
+            if not confirmed:
+                return "Task execution cancelled by user"
+            
+            # Set output path
+            if output_path:
+                self.output_path = Path(output_path)
+            
+            # Run agent with schedule coordination
+            result = await self.run()
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Schedule-based running failed: {e}")
             raise

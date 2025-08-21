@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.agent.report_multi import ReportGeneratorAgent
-from app.tool.knowledge_retrieval import KnowledgeRetrievalTool
+from app.tool.knowledge_retrieval import get_knowledge_retrieval_tool
 from app.converter import MarkdownConverter, ConversionRequest
 from app.logger import logger
 from app.config import settings
@@ -34,7 +34,9 @@ class ReportGenerationSystem:
     async def generate_report(self,
                               template_name: str,
                               output_name: Optional[str] = None,
-                              max_steps: int = 20) -> str:
+                              max_steps: int = 20,
+                              use_schedule: bool = False,
+                              confirm_execution: bool = True) -> str:
         """生成报告"""
         try:
             # 查找模板文件
@@ -64,9 +66,17 @@ class ReportGenerationSystem:
             logger.info(f"开始生成报告，模板: {template_path.name}")
             logger.info(f"知识库路径: {self.knowledge_base_path}")
             logger.info(f"输出路径: {output_path}")
+            logger.info(f"使用调度模式: {use_schedule}")
 
             # 运行Agent
-            result = await agent.run_with_template(str(template_path), str(output_path))
+            if use_schedule:
+                result = await agent.run_with_schedule(
+                    str(template_path), 
+                    str(output_path),
+                    confirm_execution=confirm_execution
+                )
+            else:
+                result = await agent.run_with_template(str(template_path), str(output_path))
 
             # 获取进度信息
             progress = agent.get_progress()
@@ -155,7 +165,7 @@ class ReportGenerationSystem:
     async def test_knowledge_base(self, query: str = "智能鞋垫") -> str:
         """测试知识库检索"""
         try:
-            knowledge_tool = KnowledgeRetrievalTool(str(self.knowledge_base_path))
+            knowledge_tool = get_knowledge_retrieval_tool(str(self.knowledge_base_path))
             result = await knowledge_tool.execute(query = query, threshold=settings.distance, top_k = settings.top_k)
 
             if result.error:
@@ -212,11 +222,15 @@ async def main():
     parser.add_argument("--format", "-f", default = "json",
                         choices = ["json", "markdown"], help = "转换目标格式")
     parser.add_argument("--query", "-q", default = "智能鞋垫", help = "测试查询")
-    parser.add_argument("--max-steps", type = int, default = 20, help = "最大执行步数")
+    parser.add_argument("--max-steps", type = int, default = 200, help = "最大执行步数")
     parser.add_argument("--knowledge-base", default = "workdir/documents",
                         help = "知识库路径")
     parser.add_argument("--template-base", default = "workdir/template",
                         help = "模板基础路径")
+    parser.add_argument("--schedule", action="store_true", 
+                        help = "使用任务调度模式")
+    parser.add_argument("--no-confirm", action="store_true",
+                        help = "跳过用户确认（自动执行）")
 
     args = parser.parse_args()
 
@@ -235,7 +249,9 @@ async def main():
             result = await system.generate_report(
                 template_name = args.template,
                 output_name = args.output,
-                max_steps = args.max_steps
+                max_steps = args.max_steps,
+                use_schedule = args.schedule,
+                confirm_execution = not args.no_confirm
             )
             print(result)
 

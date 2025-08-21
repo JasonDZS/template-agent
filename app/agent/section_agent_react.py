@@ -7,14 +7,17 @@ This module provides a section generation agent that supports multiple knowledge
 retrievals until the section content is complete.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pydantic import Field
 from app.agent.toolcall import ToolCallAgent
-from app.tool.knowledge_retrieval import KnowledgeRetrievalTool
+from app.agent.task_types import TaskType
+from app.tool.knowledge_retrieval import get_knowledge_retrieval_tool
 from app.tool import ToolCollection, Terminate
-from app.prompt.section_agent import get_system_prompt, NEXT_STEP_PROMPT
+from app.prompt.section_agent import NEXT_STEP_PROMPT, TaskPrompts
 from app.schema import AgentState
 from app.logger import logger
+from app.converter import children_content_to_markdown
+
 
 
 class SectionAgentReAct(ToolCallAgent):
@@ -39,11 +42,14 @@ class SectionAgentReAct(ToolCallAgent):
     knowledge_base_path: str = Field(default="workdir/documents")
     generated_content: str = Field(default="")
     is_content_complete: bool = Field(default=False)
-    
+    task_type: TaskType = Field(default=TaskType.GENERATION)
+
     def __init__(self, 
                  section_info: Dict[str, Any],
                  report_context: Dict[str, Any],
                  knowledge_base_path: str = "workdir/documents",
+                 output_format: Optional[str] = None,
+                 task_type: TaskType = TaskType.GENERATION,
                  **kwargs):
         """
         Initialize the SectionAgentReAct.
@@ -55,6 +61,10 @@ class SectionAgentReAct(ToolCallAgent):
                 including title and other metadata.
             knowledge_base_path (str, optional): Path to the knowledge base directory.
                 Defaults to "workdir/documents".
+            output_format (str, optional): Expected output format for the section.
+                Defaults to None.
+            task_type (TaskType, optional): Type of task (generation, merge, analysis, summary).
+                Defaults to TaskType.GENERATION.
             **kwargs: Additional keyword arguments passed to the parent class.
         """
         
@@ -80,18 +90,29 @@ class SectionAgentReAct(ToolCallAgent):
         self.knowledge_base_path = knowledge_base_path
         self.generated_content = ""
         self.is_content_complete = False
+        self.task_type = task_type
         
-        # Set up prompts
-        self.system_prompt = get_system_prompt(
+        # Process output format: convert children_content to markdown if provided
+        processed_output_format = ""
+        if output_format:
+            # If output_format is a list (children_content), convert to markdown
+            if isinstance(output_format, list):
+                processed_output_format = children_content_to_markdown(output_format)
+            else:
+                processed_output_format = str(output_format)
+        
+        # Set up prompts based on task type
+        self.system_prompt = self._get_task_prompt(
             section_title=section_title,
             report_title=report_title,
             section_level=section_level,
-            section_id=section_id
+            output_format=processed_output_format
         )
+        logger.info(f"System prompt for section '{section_title}': {self.system_prompt}")
         self.next_step_prompt = NEXT_STEP_PROMPT
         
         # Initialize tools
-        knowledge_tool = KnowledgeRetrievalTool(knowledge_base_path)
+        knowledge_tool = get_knowledge_retrieval_tool(knowledge_base_path)
         terminate_tool = Terminate()
         
         self.available_tools = ToolCollection(
@@ -100,6 +121,97 @@ class SectionAgentReAct(ToolCallAgent):
         )
         
         logger.info(f"Initialized SectionAgent: {section_title}")
+
+    def __repr__(self) -> str:
+        """
+        String representation of the SectionAgent.
+
+        Returns:
+            str: A string representation of the agent's state.
+        """
+        return (f"SectionAgentReAct(section_info={self.section_info}, "
+                f"report_context={self.report_context}, "
+                f"task_type={self.task_type}, "
+                f"is_content_complete={self.is_content_complete})")
+
+    def _get_task_prompt(self, section_title: str, report_title: str, 
+                        section_level: int, output_format: str) -> str:
+        """
+        Get the appropriate prompt based on task type.
+        
+        Args:
+            section_title: Title of the section
+            report_title: Title of the report
+            section_level: Level of the section
+            output_format: Expected output format
+            
+        Returns:
+            str: The formatted prompt for the specific task type
+        """
+        if self.task_type == TaskType.GENERATION:
+            return TaskPrompts.GENERATION_PROMPT.format(
+                section_title=section_title,
+                report_title=report_title,
+                section_level=section_level,
+                output_format=output_format
+            )
+        elif self.task_type == TaskType.MERGE:
+            # For merge tasks, we need child count which we'll get dynamically
+            return TaskPrompts.MERGE_PROMPT.format(
+                section_title=section_title,
+                report_title=report_title,
+                section_level=section_level,
+                child_count=0  # Will be updated when child content is received
+            )
+        elif self.task_type == TaskType.ANALYSIS:
+            return TaskPrompts.ANALYSIS_PROMPT.format(
+                section_title=section_title,
+                report_title=report_title,
+                section_level=section_level,
+                output_format=output_format
+            )
+        elif self.task_type == TaskType.SUMMARY:
+            return TaskPrompts.SUMMARY_PROMPT.format(
+                section_title=section_title,
+                report_title=report_title,
+                section_level=section_level,
+                output_format=output_format
+            )
+        else:
+            # Default to generation prompt
+            return TaskPrompts.GENERATION_PROMPT.format(
+                section_title=section_title,
+                report_title=report_title,
+                section_level=section_level,
+                output_format=output_format
+            )
+    
+    def update_merge_prompt_with_children(self, child_contents: List[str]) -> None:
+        """
+        Update the system prompt for merge tasks with actual child content.
+        
+        Args:
+            child_contents: List of content from child tasks
+        """
+        if self.task_type == TaskType.MERGE:
+            section_title = self.section_info.get("content", "Untitled Section")
+            report_title = self.report_context.get("title", "")
+            section_level = self.section_info.get("level", 1)
+            
+            self.system_prompt = TaskPrompts.MERGE_PROMPT.format(
+                section_title=section_title,
+                report_title=report_title,
+                section_level=section_level,
+                child_count=len(child_contents)
+            )
+            
+            # Add child content to the system prompt
+            if child_contents:
+                child_content_text = "\n\n".join([
+                    f"Sub-content {i+1}:\n{content}" 
+                    for i, content in enumerate(child_contents)
+                ])
+                self.system_prompt += f"\n\nSub-contents to merge:\n{child_content_text}"
     
     async def execute_tool(self, command) -> str:
         """

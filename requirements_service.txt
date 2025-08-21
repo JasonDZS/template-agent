@@ -1,0 +1,38 @@
+# Template Report Generation Service Dependencies
+
+# Core service dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+pydantic>=2.5.0
+
+# CLI support
+click>=8.1.0
+
+# HTTP client for examples
+requests>=2.31.0
+
+# WebSocket client for examples
+websockets>=12.0
+
+# File handling
+aiofiles>=23.2.0
+
+# CORS support
+python-multipart>=0.0.6
+
+# Optional: Static file serving
+jinja2>=3.1.0
+
+# Development dependencies (optional)
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+httpx>=0.25.0  # for testing FastAPI
+
+# Existing project dependencies
+# (These should already be in your main requirements.txt)
+# openai
+# chromadb
+# pydantic
+# pathlib
+# asyncio
