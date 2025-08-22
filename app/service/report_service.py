@@ -1,0 +1,755 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Report Generation Service.
+
+This module provides the main service class for generating reports from templates
+with full streaming support, concurrent execution, and real-time progress tracking.
+"""
+
+import asyncio
+import json
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Callable, Awaitable, Any
+import uuid
+
+from ..template import MarkdownTaskSchedule, TaskScheduler
+from ..template.task_models import Task, TaskType
+from ..logger import logger
+
+from .models import (
+    ReportGenerationRequest, ReportJob, ReportTask, TaskStatus,
+    StreamMessage, MessageType, JobProgress, TaskProgress,
+    ReportGenerationResponse, ConnectionInfo
+)
+from .streaming_executors import StreamingSectionExecutor, StreamingMergeExecutor
+
+
+class ReportGenerationService:
+    """
+    Main service for template-based report generation with streaming support.
+    
+    This service manages the complete lifecycle of report generation including:
+    - Template parsing and task creation
+    - Concurrent task execution with streaming output
+    - WebSocket connection management
+    - Progress tracking and status updates
+    - Final report assembly and storage
+    """
+    
+    def __init__(self):
+        """Initialize the report generation service."""
+        self.jobs: Dict[str, ReportJob] = {}  # Active jobs
+        self.connections: Dict[str, ConnectionInfo] = {}  # WebSocket connections
+        self.job_connections: Dict[str, Set[str]] = {}  # job_id -> connection_ids
+        
+        # Background task for cleaning up completed jobs
+        self._cleanup_task: Optional[asyncio.Task] = None
+        self._cleanup_interval = 3600  # 1 hour
+        
+        logger.info("ReportGenerationService initialized")
+    
+    async def start(self) -> None:
+        """Start the service and background tasks."""
+        if not self._cleanup_task or self._cleanup_task.done():
+            self._cleanup_task = asyncio.create_task(self._cleanup_completed_jobs())
+        logger.info("ReportGenerationService started")
+    
+    async def stop(self) -> None:
+        """Stop the service and cleanup resources."""
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Cancel all running jobs
+        for job_id in list(self.jobs.keys()):
+            await self.cancel_job(job_id)
+            
+        logger.info("ReportGenerationService stopped")
+    
+    async def create_report_job(self, request: ReportGenerationRequest) -> ReportGenerationResponse:
+        """
+        Create a new report generation job.
+        
+        Args:
+            request: Report generation request parameters
+            
+        Returns:
+            ReportGenerationResponse with job details
+        """
+        job_id = str(uuid.uuid4())
+        
+        try:
+            # Validate template file
+            template_path = Path(request.template_path)
+            if not template_path.exists():
+                raise ValueError(f"Template file not found: {request.template_path}")
+            
+            # Create job
+            job = ReportJob(
+                job_id=job_id,
+                request=request,
+                status="initializing"
+            )
+            
+            # Parse template and create tasks
+            await self._initialize_job_tasks(job)
+            
+            # Store job
+            self.jobs[job_id] = job
+            self.job_connections[job_id] = set()
+            
+            logger.info(f"Created report job {job_id} with {len(job.tasks)} tasks")
+            
+            return ReportGenerationResponse(
+                job_id=job_id,
+                status="created",
+                message=f"Report generation job created with {len(job.tasks)} tasks",
+                progress=await self._get_job_progress(job_id)
+            )
+            
+        except Exception as e:
+            error_msg = f"Failed to create report job: {str(e)}"
+            logger.error(error_msg)
+            
+            return ReportGenerationResponse(
+                job_id=job_id,
+                status="failed",
+                message=error_msg
+            )
+    
+    async def start_job(self, job_id: str) -> ReportGenerationResponse:
+        """
+        Start executing a report generation job.
+        
+        Args:
+            job_id: Job identifier
+            
+        Returns:
+            ReportGenerationResponse with execution status
+        """
+        if job_id not in self.jobs:
+            return ReportGenerationResponse(
+                job_id=job_id,
+                status="not_found",
+                message="Job not found"
+            )
+        
+        job = self.jobs[job_id]
+        
+        if job.status == "running":
+            return ReportGenerationResponse(
+                job_id=job_id,
+                status="already_running",
+                message="Job is already running"
+            )
+        
+        try:
+            job.status = "running"
+            job.start_time = datetime.now()
+            
+            # Start job execution in background
+            asyncio.create_task(self._execute_job(job))
+            
+            logger.info(f"Started job execution for {job_id}")
+            
+            return ReportGenerationResponse(
+                job_id=job_id,
+                status="started",
+                message="Job execution started",
+                progress=await self._get_job_progress(job_id)
+            )
+            
+        except Exception as e:
+            error_msg = f"Failed to start job: {str(e)}"
+            logger.error(error_msg)
+            job.status = "failed"
+            job.error_message = error_msg
+            
+            return ReportGenerationResponse(
+                job_id=job_id,
+                status="failed",
+                message=error_msg
+            )
+    
+    async def get_job_status(self, job_id: str) -> Optional[ReportGenerationResponse]:
+        """
+        Get current status of a job.
+        
+        Args:
+            job_id: Job identifier
+            
+        Returns:
+            ReportGenerationResponse with current status
+        """
+        if job_id not in self.jobs:
+            return None
+        
+        job = self.jobs[job_id]
+        progress = await self._get_job_progress(job_id)
+        
+        return ReportGenerationResponse(
+            job_id=job_id,
+            status=job.status,
+            message=f"Job is {job.status}",
+            report_path=job.final_report_path,
+            progress=progress,
+            created_at=job.start_time
+        )
+    
+    async def cancel_job(self, job_id: str) -> ReportGenerationResponse:
+        """
+        Cancel a running job.
+        
+        Args:
+            job_id: Job identifier
+            
+        Returns:
+            ReportGenerationResponse with cancellation status
+        """
+        if job_id not in self.jobs:
+            return ReportGenerationResponse(
+                job_id=job_id,
+                status="not_found",
+                message="Job not found"
+            )
+        
+        job = self.jobs[job_id]
+        job.status = "cancelled"
+        job.end_time = datetime.now()
+        
+        # Update all running and pending tasks to cancelled
+        for task in job.tasks.values():
+            if task.status in [TaskStatus.RUNNING, TaskStatus.PENDING, TaskStatus.READY]:
+                task.status = TaskStatus.CANCELLED
+                task.end_time = datetime.now()
+        
+        # Cancel scheduler tasks if scheduler exists  
+        if hasattr(job, 'scheduler') and job.scheduler:
+            # Update scheduler task status
+            for scheduler_task in job.scheduler.tasks.values():
+                if scheduler_task.status in [TaskStatus.RUNNING, TaskStatus.PENDING, TaskStatus.READY]:
+                    scheduler_task.status = TaskStatus.CANCELLED
+        
+        # Send cancellation message to connected clients
+        await self._broadcast_job_message(
+            job_id=job_id,
+            message_type=MessageType.JOB_ERROR,
+            content={"status": "cancelled", "message": "Job was cancelled"}
+        )
+        
+        logger.info(f"Cancelled job {job_id}")
+        
+        return ReportGenerationResponse(
+            job_id=job_id,
+            status="cancelled",
+            message="Job cancelled successfully"
+        )
+    
+    async def register_connection(self, connection_id: str, job_id: Optional[str] = None) -> ConnectionInfo:
+        """
+        Register a new WebSocket connection.
+        
+        Args:
+            connection_id: Connection identifier
+            job_id: Optional job ID to associate with connection
+            
+        Returns:
+            ConnectionInfo object
+        """
+        connection = ConnectionInfo(
+            connection_id=connection_id,
+            job_id=job_id
+        )
+        
+        self.connections[connection_id] = connection
+        
+        if job_id and job_id in self.job_connections:
+            self.job_connections[job_id].add(connection_id)
+        
+        logger.info(f"Registered connection {connection_id} for job {job_id}")
+        return connection
+    
+    async def unregister_connection(self, connection_id: str) -> None:
+        """
+        Unregister a WebSocket connection.
+        
+        Args:
+            connection_id: Connection identifier
+        """
+        if connection_id in self.connections:
+            connection = self.connections[connection_id]
+            if connection.job_id and connection.job_id in self.job_connections:
+                self.job_connections[connection.job_id].discard(connection_id)
+            
+            del self.connections[connection_id]
+            logger.info(f"Unregistered connection {connection_id}")
+    
+    async def _initialize_job_tasks(self, job: ReportJob) -> None:
+        """Initialize tasks for a job from template."""
+        request = job.request
+        
+        # Create task schedule from template
+        schedule = MarkdownTaskSchedule(
+            request.template_path,
+            max_concurrent=request.max_concurrent
+        )
+        
+        # Convert schedule tasks to report tasks
+        for task_id, task in schedule.tasks.items():
+            report_task = ReportTask(
+                task_id=task.id,
+                job_id=job.job_id,
+                task_type=task.task_type.value,
+                title=task.title,
+                level=task.level,
+                dependencies=[dep for dep in task.dependencies],
+                metadata={
+                    "template_task": True,
+                    "estimated_duration": task.estimated_duration,
+                    "priority": task.priority
+                }
+            )
+            job.tasks[task_id] = report_task
+    
+    async def _execute_job(self, job: ReportJob) -> None:
+        """Execute a complete job."""
+        job_id = job.job_id
+        request = job.request
+        
+        try:
+            # Send job start message
+            await self._broadcast_job_message(
+                job_id=job_id,
+                message_type=MessageType.JOB_PROGRESS,
+                content={"status": "started", "message": "Job execution started"}
+            )
+            
+            # Create task scheduler
+            scheduler = TaskScheduler(max_concurrent=request.max_concurrent)
+            
+            # Create streaming callback
+            async def stream_callback(message: StreamMessage) -> None:
+                await self._handle_stream_message(message)
+            
+            # Register streaming executors
+            section_executor = StreamingSectionExecutor(
+                knowledge_base_path=request.knowledge_base_path,
+                stream_callback=stream_callback if request.enable_streaming else None
+            )
+            merge_executor = StreamingMergeExecutor(
+                enable_model_merge=request.enable_model_merge,
+                stream_callback=stream_callback if request.enable_streaming else None
+            )
+            
+            scheduler.register_executor(section_executor)
+            scheduler.register_executor(merge_executor)
+            
+            # Set global context
+            scheduler.set_global_context({
+                "job_id": job_id,
+                "report_title": request.report_title or f"Generated Report",
+                "report_type": "template_generated",
+                "template_path": request.template_path
+            })
+            
+            # Recreate template tasks for scheduler using the SAME task IDs
+            schedule = MarkdownTaskSchedule(
+                request.template_path,
+                max_concurrent=request.max_concurrent
+            )
+            
+            # Create a mapping from old task IDs to new task IDs for consistency
+            old_to_new_task_mapping = {}
+            for old_task_id, old_task in schedule.tasks.items():
+                for report_task_id, report_task in job.tasks.items():
+                    if report_task.title == old_task.title and report_task.task_type == old_task.task_type.value:
+                        old_to_new_task_mapping[old_task.id] = report_task_id
+                        # Update the scheduler task with the correct ID
+                        old_task.id = report_task_id
+                        break
+            
+            # Update task dependencies to use the new task IDs
+            for task in schedule.tasks.values():
+                new_dependencies = []
+                for dep_id in task.dependencies:
+                    if dep_id in old_to_new_task_mapping:
+                        new_dependencies.append(old_to_new_task_mapping[dep_id])
+                    else:
+                        new_dependencies.append(dep_id)
+                task.dependencies = new_dependencies
+            
+            # Add tasks to scheduler with corrected IDs and dependencies
+            for task in schedule.tasks.values():
+                scheduler.add_task(task)
+            
+            # Execute tasks
+            await self._execute_scheduler_tasks(scheduler, job)
+            
+            # Generate final report
+            if job.status != "cancelled":
+                await self._generate_final_report(scheduler, job)
+            
+        except Exception as e:
+            error_msg = f"Job execution failed: {str(e)}"
+            logger.error(error_msg)
+            job.status = "failed"
+            job.error_message = error_msg
+            job.end_time = datetime.now()
+            
+            await self._broadcast_job_message(
+                job_id=job_id,
+                message_type=MessageType.JOB_ERROR,
+                content={"status": "failed", "error": error_msg}
+            )
+    
+    async def _execute_scheduler_tasks(self, scheduler: TaskScheduler, job: ReportJob) -> None:
+        """Execute tasks using an event-driven scheduler that starts new tasks immediately when others complete."""
+        job_id = job.job_id
+        running_tasks = {}  # task_id -> asyncio.Task
+        
+        async def task_completion_handler(task, task_coroutine):
+            """Handle individual task completion and update job status."""
+            try:
+                result = await task_coroutine
+                
+                # Update job task status
+                if task.id in job.tasks:
+                    job_task = job.tasks[task.id]
+                    job_task.end_time = datetime.now()
+                    job_task.status = TaskStatus.COMPLETED
+                    
+                    if hasattr(task, 'result') and task.result:
+                        job_task.content = task.result.content
+                        # Copy metadata from task result
+                        if hasattr(task.result, 'metadata') and task.result.metadata:
+                            job_task.metadata.update(task.result.metadata)
+                            logger.info(f"Updated task {task.id} metadata with keys: {list(task.result.metadata.keys())}")
+                            # Log memory specifically if it exists
+                            if 'memory' in task.result.metadata:
+                                memory_count = len(task.result.metadata['memory']) if isinstance(task.result.metadata['memory'], list) else 0
+                                logger.info(f"Task {task.id} has memory with {memory_count} messages")
+                    else:
+                        logger.warning(f"Task {task.id} completed but has no result or result.content")
+                
+                logger.info(f"✅ Task {task.id} completed, checking for new tasks to start")
+                
+            except Exception as e:
+                # Handle task failure
+                if task.id in job.tasks:
+                    job_task = job.tasks[task.id]
+                    job_task.end_time = datetime.now()
+                    job_task.status = TaskStatus.FAILED
+                    job_task.error_message = str(e)
+                
+                logger.error(f"❌ Task {task.id} failed: {str(e)}")
+            
+            finally:
+                # Remove from running tasks
+                running_tasks.pop(task.id, None)
+        
+        # Main scheduling loop
+        while job.status == "running":
+            # Check if all tasks are completed
+            progress = scheduler.get_progress()
+            total_completed = progress["completed_tasks"] + progress["failed_tasks"]
+            
+            if total_completed == progress["total_tasks"]:
+                break
+            
+            # Get ready tasks that can be started
+            ready_tasks = scheduler.get_ready_tasks()
+            available_slots = scheduler.max_concurrent - len(running_tasks)
+            
+            # Start new tasks if slots are available
+            if ready_tasks and available_slots > 0:
+                tasks_to_start = ready_tasks[:available_slots]
+                
+                for task in tasks_to_start:
+                    # Update task status to running
+                    if task.id in job.tasks:
+                        job.tasks[task.id].status = TaskStatus.RUNNING
+                        job.tasks[task.id].start_time = datetime.now()
+                    
+                    # Start task execution
+                    task_coroutine = scheduler.execute_task(task)
+                    async_task = asyncio.create_task(task_completion_handler(task, task_coroutine))
+                    running_tasks[task.id] = async_task
+                    
+                    logger.info(f"🚀 Started task {task.id} ({task.title})")
+                
+                # Send progress update
+                await self._broadcast_job_message(
+                    job_id=job_id,
+                    message_type=MessageType.JOB_PROGRESS,
+                    content={
+                        "started_tasks": len(tasks_to_start),
+                        "running_tasks": len(running_tasks),
+                        "progress": scheduler.get_progress()
+                    }
+                )
+            
+            # Wait for at least one task to complete, or timeout after 1 second
+            if running_tasks:
+                try:
+                    done, pending = await asyncio.wait(
+                        running_tasks.values(), 
+                        return_when=asyncio.FIRST_COMPLETED,
+                        timeout=1.0
+                    )
+                    
+                    # Process completed tasks (they've already been handled by task_completion_handler)
+                    for completed_task in done:
+                        try:
+                            await completed_task  # This should not block since it's done
+                        except Exception as e:
+                            logger.error(f"Error in task completion handler: {e}")
+                    
+                except asyncio.TimeoutError:
+                    # Timeout is normal, just continue the loop
+                    pass
+            else:
+                # No running tasks, but also no ready tasks - might be waiting for dependencies
+                if not ready_tasks:
+                    await asyncio.sleep(0.1)
+        
+        # Wait for any remaining tasks to complete
+        if running_tasks:
+            logger.info(f"Waiting for {len(running_tasks)} remaining tasks to complete")
+            await asyncio.gather(*running_tasks.values(), return_exceptions=True)
+        
+        # Mark job as completed
+        if job.status == "running":
+            job.status = "completed"
+            job.end_time = datetime.now()
+    
+    async def _generate_final_report(self, scheduler: TaskScheduler, job: ReportJob) -> None:
+        """Generate the final report file."""
+        job_id = job.job_id
+        request = job.request
+        
+        try:
+            # Get all task results
+            task_results = scheduler.get_task_results()
+            
+            if not task_results:
+                raise ValueError("No task results available for final report")
+            
+            # Find root tasks and sort by document order
+            all_dependencies = set()
+            for task in scheduler.tasks.values():
+                all_dependencies.update(task.dependencies)
+            
+            root_tasks = []
+            for task_id, task in scheduler.tasks.items():
+                if (task_id not in all_dependencies and 
+                    task.result and task.result.content):
+                    root_tasks.append((task, task.result))
+            
+            # Sort by level and document order
+            def extract_line_number(task_obj):
+                try:
+                    heading_node = task_obj.heading_node
+                    if hasattr(heading_node, 'attributes') and heading_node.attributes:
+                        return heading_node.attributes.get('line_number', 0)
+                    return 0
+                except (AttributeError, KeyError):
+                    return 0
+            
+            root_tasks.sort(key=lambda x: (x[0].level, extract_line_number(x[0])))
+            
+            # Build final report
+            template_name = Path(request.template_path).stem
+            report_title = request.report_title or f"Generated Report - {template_name}"
+            
+            final_report = f"# {report_title}\n\n"
+            final_report += f"*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n\n"
+            
+            for task, result in root_tasks:
+                content = result.content.strip()
+                if content:
+                    final_report += f"{content}\n\n"
+            
+            # Save report
+            if request.output_path:
+                output_path = Path(request.output_path)
+            else:
+                output_path = Path(f"workdir/output/report_{template_name}_{job_id[:8]}.md")
+            
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(final_report)
+            
+            job.final_report_path = str(output_path)
+            
+            # Send completion message
+            await self._broadcast_job_message(
+                job_id=job_id,
+                message_type=MessageType.JOB_COMPLETE,
+                content={
+                    "status": "completed",
+                    "report_path": str(output_path),
+                    "report_length": len(final_report),
+                    "task_count": len(root_tasks)
+                }
+            )
+            
+            logger.info(f"Generated final report for job {job_id}: {output_path}")
+            
+        except Exception as e:
+            error_msg = f"Failed to generate final report: {str(e)}"
+            logger.error(error_msg)
+            job.status = "failed"
+            job.error_message = error_msg
+            
+            await self._broadcast_job_message(
+                job_id=job_id,
+                message_type=MessageType.JOB_ERROR,
+                content={"status": "failed", "error": error_msg}
+            )
+    
+    async def _handle_stream_message(self, message: StreamMessage) -> None:
+        """Handle incoming stream message."""
+        job_id = message.job_id
+        
+        # Update task status if applicable
+        if message.task_id and job_id in self.jobs:
+            job = self.jobs[job_id]
+            if message.task_id in job.tasks:
+                task = job.tasks[message.task_id]
+                
+                if message.message_type == MessageType.TASK_START:
+                    task.status = TaskStatus.STREAMING
+                elif message.message_type == MessageType.TASK_COMPLETE:
+                    task.status = TaskStatus.COMPLETED
+                    task.progress = 100.0
+                    # Also update metadata from the stream message if available
+                    if message.metadata:
+                        task.metadata.update(message.metadata)
+                        logger.info(f"Updated task {message.task_id} metadata from stream message with keys: {list(message.metadata.keys())}")
+                elif message.message_type == MessageType.TASK_ERROR:
+                    task.status = TaskStatus.FAILED
+                    if isinstance(message.content, dict):
+                        task.error_message = message.content.get("error", "Unknown error")
+                elif message.message_type == MessageType.TASK_PROGRESS:
+                    if isinstance(message.content, dict):
+                        task.progress = message.content.get("progress", 0.0)
+        
+        # Broadcast to connected clients
+        await self._broadcast_message_to_job(job_id, message)
+    
+    async def _broadcast_job_message(self, job_id: str, message_type: MessageType, content: Any) -> None:
+        """Broadcast a job-level message."""
+        message = StreamMessage(
+            job_id=job_id,
+            message_type=message_type,
+            content=content
+        )
+        await self._broadcast_message_to_job(job_id, message)
+    
+    async def _broadcast_message_to_job(self, job_id: str, message: StreamMessage) -> None:
+        """Broadcast message to all connections subscribed to a job."""
+        if job_id not in self.job_connections:
+            return
+        
+        message_json = message.json()
+        connection_ids = list(self.job_connections[job_id])
+        
+        for connection_id in connection_ids:
+            try:
+                # This would be replaced with actual WebSocket send in the API layer
+                logger.debug(f"Broadcasting to connection {connection_id}: {message.message_type}")
+                # await websocket.send_text(message_json)
+            except Exception as e:
+                logger.error(f"Failed to send message to connection {connection_id}: {e}")
+                # Remove failed connection
+                self.job_connections[job_id].discard(connection_id)
+                self.connections.pop(connection_id, None)
+    
+    async def _get_job_progress(self, job_id: str) -> Optional[JobProgress]:
+        """Get current job progress."""
+        if job_id not in self.jobs:
+            return None
+        
+        job = self.jobs[job_id]
+        tasks = list(job.tasks.values())
+        
+        total_tasks = len(tasks)
+        pending_tasks = sum(1 for t in tasks if t.status == TaskStatus.PENDING)
+        ready_tasks = sum(1 for t in tasks if t.status == TaskStatus.READY)
+        running_tasks = sum(1 for t in tasks if t.status in [TaskStatus.RUNNING, TaskStatus.STREAMING])
+        completed_tasks = sum(1 for t in tasks if t.status == TaskStatus.COMPLETED)
+        failed_tasks = sum(1 for t in tasks if t.status == TaskStatus.FAILED)
+        
+        if total_tasks > 0:
+            overall_progress = (completed_tasks / total_tasks) * 100.0
+        else:
+            overall_progress = 0.0
+        
+        task_progress_list = [
+            TaskProgress(
+                task_id=task.task_id,
+                title=task.title,
+                status=task.status,
+                progress=task.progress,
+                content_length=len(task.content) if task.content else 0,
+                error_message=task.error_message
+            )
+            for task in tasks
+        ]
+        
+        return JobProgress(
+            job_id=job_id,
+            total_tasks=total_tasks,
+            pending_tasks=pending_tasks,
+            ready_tasks=ready_tasks,
+            running_tasks=running_tasks,
+            completed_tasks=completed_tasks,
+            failed_tasks=failed_tasks,
+            overall_progress=overall_progress,
+            start_time=job.start_time,
+            tasks=task_progress_list
+        )
+    
+    async def _cleanup_completed_jobs(self) -> None:
+        """Background task to cleanup old completed jobs."""
+        while True:
+            try:
+                cutoff_time = datetime.now() - timedelta(hours=24)  # Keep jobs for 24 hours
+                jobs_to_remove = []
+                
+                for job_id, job in self.jobs.items():
+                    if (job.status in ["completed", "failed", "cancelled"] and 
+                        job.end_time and job.end_time < cutoff_time):
+                        jobs_to_remove.append(job_id)
+                
+                for job_id in jobs_to_remove:
+                    del self.jobs[job_id]
+                    if job_id in self.job_connections:
+                        del self.job_connections[job_id]
+                    logger.info(f"Cleaned up old job {job_id}")
+                
+                await asyncio.sleep(self._cleanup_interval)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in cleanup task: {e}")
+                await asyncio.sleep(60)  # Wait before retry
+
+
+# Global service instance
+_service_instance: Optional[ReportGenerationService] = None
+
+
+def get_report_service() -> ReportGenerationService:
+    """Get the global report generation service instance."""
+    global _service_instance
+    if _service_instance is None:
+        _service_instance = ReportGenerationService()
+    return _service_instance

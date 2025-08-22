@@ -140,6 +140,7 @@ class BaseAgent(BaseModel, ABC):
             self.update_memory("user", request)
 
         results: List[str] = []
+        final_state = None
         async with self.state_context(AgentState.RUNNING):
             while (
                 self.current_step < self.max_steps and self.state != AgentState.FINISHED
@@ -154,10 +155,18 @@ class BaseAgent(BaseModel, ABC):
 
                 results.append(f"Step {self.current_step}: {step_result}")
 
+            # Capture the final state before state_context reverts it
+            final_state = self.state
+            
             if self.current_step >= self.max_steps:
                 self.current_step = 0
-                self.state = AgentState.IDLE
+                final_state = AgentState.IDLE
                 results.append(f"Terminated: Reached max steps ({self.max_steps})")
+        
+        # Set the final state after exiting state_context
+        if final_state:
+            self.state = final_state
+            
         return "\n".join(results) if results else "No steps executed"
 
     @abstractmethod

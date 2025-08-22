@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Markdown和JSON互转核心模块
+Markdown and JSON Conversion Core Module
+
+This module provides comprehensive functionality for converting between
+Markdown and JSON formats, including parsing, rendering, and structured
+document representation.
 """
 
 import json
@@ -17,28 +21,44 @@ from app.config import settings
 
 
 class MarkdownParser:
-    """Markdown解析器"""
+    """Parser for converting Markdown text to structured document objects.
+    
+    This class provides comprehensive parsing capabilities for Markdown syntax,
+    including headings, code blocks, lists, blockquotes, images, and metadata.
+    
+    Attributes:
+        current_pos: Current position in the line array during parsing
+        lines: Array of text lines being parsed
+    """
     
     def __init__(self):
+        """Initialize the Markdown parser."""
         self.current_pos = 0
         self.lines = []
     
     def parse(self, markdown_text: str) -> MarkdownDocument:
-        """解析Markdown文本为文档对象"""
+        """Parse Markdown text into a document object.
+        
+        Args:
+            markdown_text: The Markdown text to parse
+            
+        Returns:
+            MarkdownDocument object containing the parsed structure
+        """
         self.lines = markdown_text.split('\n')
         self.current_pos = 0
         
-        # 提取元数据
+        # Extract metadata
         metadata = self._extract_metadata()
         
-        # 解析内容
+        # Parse content
         elements = []
         while self.current_pos < len(self.lines):
             element = self._parse_next_element()
             if element:
                 elements.append(element)
         
-        # 获取标题（如果第一个元素是一级标题）
+        # Get title (if first element is h1)
         title = None
         if elements and isinstance(elements[0], HeadingElement) and elements[0].level == 1:
             title = elements[0].content
@@ -50,24 +70,28 @@ class MarkdownParser:
         )
     
     def _extract_metadata(self) -> Optional[Dict[str, Any]]:
-        """提取HTML注释中的元数据"""
+        """Extract metadata from HTML comments.
+        
+        Returns:
+            Dictionary of metadata key-value pairs, or None if no metadata found
+        """
         metadata = {}
         
         while self.current_pos < len(self.lines):
             line = self.lines[self.current_pos].strip()
             
-            # 检查是否是元数据注释
+            # Check if this is a metadata comment
             if line.startswith('<!-- Metadata:'):
                 self.current_pos += 1
                 
-                # 解析元数据内容
+                # Parse metadata content
                 while self.current_pos < len(self.lines):
                     line = self.lines[self.current_pos].strip()
                     if line == '-->':
                         self.current_pos += 1
                         break
                     
-                    # 解析键值对
+                    # Parse key-value pairs
                     if ':' in line:
                         key, value = line.split(':', 1)
                         metadata[key.strip()] = value.strip()
@@ -75,7 +99,7 @@ class MarkdownParser:
                     self.current_pos += 1
                 break
             elif line:
-                # 遇到非空行且不是元数据，停止搜索
+                # Encountered non-empty line that's not metadata, stop searching
                 break
             
             self.current_pos += 1
@@ -83,52 +107,64 @@ class MarkdownParser:
         return metadata if metadata else None
     
     def _parse_next_element(self) -> Optional[MarkdownElement]:
-        """解析下一个元素"""
+        """Parse the next element in the document.
+        
+        Returns:
+            The next parsed MarkdownElement, or None if end of document
+        """
         if self.current_pos >= len(self.lines):
             return None
         
         line = self.lines[self.current_pos].strip()
         
-        # 跳过空行
+        # Skip empty lines
         if not line:
             self.current_pos += 1
             return self._parse_next_element()
         
-        # 解析标题
+        # Parse heading
         if line.startswith('#'):
             return self._parse_heading()
         
-        # 解析代码块
+        # Parse code block
         if line.startswith('```'):
             return self._parse_code_block()
         
-        # 解析列表
+        # Parse list
         if re.match(r'^[\-\*\+]\s', line) or re.match(r'^\d+\.\s', line):
             return self._parse_list()
         
-        # 解析引用
+        # Parse blockquote
         if line.startswith('>'):
             return self._parse_blockquote()
         
-        # 解析水平分割线
+        # Parse horizontal rule
         if re.match(r'^[\-\*_]{3,}$', line):
             self.current_pos += 1
             return MarkdownElement(type=ElementType.HORIZONTAL_RULE)
         
-        # 解析图片
+        # Parse table
+        if '|' in line:
+            return self._parse_table()
+        
+        # Parse image
         img_match = re.match(r'!\[([^\]]*)\]\(([^)]+)\)', line)
         if img_match:
             return self._parse_image(img_match)
         
-        # 默认作为段落处理
+        # Default to paragraph
         return self._parse_paragraph()
     
     def _parse_heading(self) -> HeadingElement:
-        """解析标题"""
+        """Parse a heading element.
+        
+        Returns:
+            HeadingElement with appropriate level and content
+        """
         line = self.lines[self.current_pos]
         self.current_pos += 1
         
-        # 计算标题级别
+        # Calculate heading level
         level = 0
         for char in line:
             if char == '#':
@@ -140,14 +176,18 @@ class MarkdownParser:
         return HeadingElement(level=level, content=content)
     
     def _parse_code_block(self) -> CodeBlockElement:
-        """解析代码块"""
+        """Parse a fenced code block.
+        
+        Returns:
+            CodeBlockElement with language and content
+        """
         start_line = self.lines[self.current_pos]
         self.current_pos += 1
         
-        # 提取语言
+        # Extract language
         language = start_line[3:].strip() if len(start_line) > 3 else None
         
-        # 收集代码内容
+        # Collect code content
         code_lines = []
         while self.current_pos < len(self.lines):
             line = self.lines[self.current_pos]
@@ -161,7 +201,11 @@ class MarkdownParser:
         return CodeBlockElement(language=language, content=content)
     
     def _parse_list(self) -> ListElement:
-        """解析列表"""
+        """Parse a list (ordered or unordered).
+        
+        Returns:
+            ListElement containing all list items
+        """
         items = []
         list_type = None
         start_num = 1
@@ -169,7 +213,7 @@ class MarkdownParser:
         while self.current_pos < len(self.lines):
             line = self.lines[self.current_pos].strip()
             
-            # 检查是否是列表项
+            # Check if this is a list item
             ordered_match = re.match(r'^(\d+)\.\s+(.*)$', line)
             unordered_match = re.match(r'^[\-\*\+]\s+(.*)$', line)
             
@@ -195,11 +239,11 @@ class MarkdownParser:
                 self.current_pos += 1
                 
             elif line == '':
-                # 空行，继续检查下一行
+                # Empty line, continue checking next line
                 self.current_pos += 1
                 continue
             else:
-                # 不是列表项，结束列表解析
+                # Not a list item, end list parsing
                 break
         
         return ListElement(
@@ -209,7 +253,11 @@ class MarkdownParser:
         )
     
     def _parse_blockquote(self) -> MarkdownElement:
-        """解析引用"""
+        """Parse a blockquote element.
+        
+        Returns:
+            MarkdownElement representing the blockquote
+        """
         quote_lines = []
         
         while self.current_pos < len(self.lines):
@@ -227,29 +275,167 @@ class MarkdownParser:
         return MarkdownElement(type=ElementType.BLOCKQUOTE, content=content)
     
     def _parse_image(self, match) -> ImageElement:
-        """解析图片"""
+        """Parse an image element.
+        
+        Args:
+            match: Regex match object containing image syntax
+            
+        Returns:
+            ImageElement with source, alt text, and optional title
+        """
         self.current_pos += 1
         alt = match.group(1)
         src_and_title = match.group(2)
         
-        # 分离URL和标题
+        # Separate URL and title
         parts = src_and_title.split(' "', 1)
         src = parts[0]
         title = parts[1][:-1] if len(parts) > 1 else None
         
         return ImageElement(src=src, alt=alt, title=title)
     
+    def _parse_table(self) -> MarkdownElement:
+        """Parse a table element.
+        
+        Returns:
+            TableElement with headers, alignments, and row data
+        """
+        table_lines = []
+        
+        # Collect all table lines including continuation lines
+        while self.current_pos < len(self.lines):
+            line = self.lines[self.current_pos].strip()
+            
+            # Check if this line contains table syntax
+            if '|' in line:
+                table_lines.append(line)
+                self.current_pos += 1
+                
+                # Check for continuation lines (lines that don't start with | but are part of a cell)
+                while (self.current_pos < len(self.lines) and 
+                       self.lines[self.current_pos].strip() and
+                       not self.lines[self.current_pos].strip().startswith('|') and
+                       '|' not in self.lines[self.current_pos].strip() and
+                       not self.lines[self.current_pos].strip().startswith('#') and
+                       not self.lines[self.current_pos].strip().startswith('```')):
+                    # This is a continuation line, add it to table_lines
+                    table_lines.append(self.lines[self.current_pos].strip())
+                    self.current_pos += 1
+                    
+            elif line == '':
+                # Empty line, continue to check next line
+                self.current_pos += 1
+                continue
+            else:
+                # Not a table line, stop parsing
+                break
+        
+        if not table_lines:
+            # Fallback if no valid table found
+            self.current_pos += 1
+            return MarkdownElement(type=ElementType.PARAGRAPH, content=self.lines[self.current_pos - 1])
+        
+        # Parse headers from first line
+        headers = []
+        if table_lines:
+            header_line = table_lines[0]
+            header_cells = [cell.strip() for cell in header_line.split('|') if cell.strip()]
+            headers = header_cells
+        
+        # Parse alignment from second line (if exists)
+        alignments = []
+        alignment_line_idx = -1
+        if len(table_lines) > 1:
+            for i, line in enumerate(table_lines[1:], 1):
+                if re.match(r'^[\|\s\-:]+$', line):
+                    alignment_line_idx = i
+                    align_cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+                    for cell in align_cells:
+                        if cell.startswith(':') and cell.endswith(':'):
+                            alignments.append(TableAlignment.CENTER)
+                        elif cell.endswith(':'):
+                            alignments.append(TableAlignment.RIGHT)
+                        elif cell.startswith(':'):
+                            alignments.append(TableAlignment.LEFT)
+                        else:
+                            alignments.append(TableAlignment.NONE)
+                    break
+        
+        # Parse table rows (skip header and alignment lines)
+        table_rows = []
+        start_idx = 1 if alignment_line_idx == -1 else alignment_line_idx + 1
+        
+        i = start_idx
+        current_row_cells = []
+        
+        while i < len(table_lines):
+            line = table_lines[i]
+            
+            if '|' in line:
+                # This is a proper table row
+                if current_row_cells:
+                    # We have a pending row, finalize it
+                    row_element = MarkdownElement(
+                        type=ElementType.TABLE_ROW,
+                        content="",
+                        children=[
+                            MarkdownElement(type=ElementType.TABLE_CELL, content=cell)
+                            for cell in current_row_cells
+                        ]
+                    )
+                    table_rows.append(row_element)
+                    current_row_cells = []
+                
+                # Parse new row
+                row_cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+                current_row_cells = row_cells
+                
+            else:
+                # This is a continuation line for multi-line cell
+                if current_row_cells:
+                    # Add to the last cell in current row
+                    current_row_cells[-1] += " " + line
+            
+            i += 1
+        
+        # Don't forget to add the last row if exists
+        if current_row_cells:
+            row_element = MarkdownElement(
+                type=ElementType.TABLE_ROW,
+                content="",
+                children=[
+                    MarkdownElement(type=ElementType.TABLE_CELL, content=cell)
+                    for cell in current_row_cells
+                ]
+            )
+            table_rows.append(row_element)
+        
+        # Ensure we have enough alignments for all headers
+        while len(alignments) < len(headers):
+            alignments.append(TableAlignment.NONE)
+        
+        return TableElement(
+            headers=headers,
+            alignments=alignments,
+            children=table_rows
+        )
+    
     def _parse_paragraph(self) -> MarkdownElement:
-        """解析段落"""
+        """Parse a paragraph element.
+        
+        Returns:
+            MarkdownElement representing a paragraph with inline elements parsed
+        """
         content_lines = []
         
         while self.current_pos < len(self.lines):
             line = self.lines[self.current_pos]
             
-            # 如果遇到空行或特殊标记，结束段落
+            # If empty line or special markers encountered, end paragraph
             if (line.strip() == '' or 
                 line.strip().startswith('#') or
                 line.strip().startswith('```') or
+                '|' in line.strip() or
                 re.match(r'^[\-\*\+]\s', line.strip()) or
                 re.match(r'^\d+\.\s', line.strip())):
                 break
@@ -259,17 +445,24 @@ class MarkdownParser:
         
         content = ' '.join(line.strip() for line in content_lines)
         
-        # 解析内联元素（链接、粗体、斜体等）
+        # Parse inline elements (links, bold, italic, etc.)
         content = self._parse_inline_elements(content)
         
         return MarkdownElement(type=ElementType.PARAGRAPH, content=content)
     
     def _parse_inline_elements(self, text: str) -> str:
-        """解析内联元素（简化处理）"""
-        # 这里可以扩展以支持更复杂的内联元素解析
-        # 当前只做基础的链接解析
+        """Parse inline elements (simplified processing).
         
-        # 解析链接 [text](url)
+        This can be extended to support more complex inline element parsing.
+        Currently only handles basic link parsing.
+        
+        Args:
+            text: Text content to process
+            
+        Returns:
+            Text with inline elements processed
+        """
+        # Parse links [text](url)
         def replace_links(match):
             link_text = match.group(1)
             url = match.group(2)
@@ -281,27 +474,57 @@ class MarkdownParser:
 
 
 class MarkdownRenderer:
-    """Markdown渲染器"""
+    """Renderer for converting structured documents to Markdown text.
+    
+    This class takes MarkdownDocument objects and renders them back to
+    properly formatted Markdown text with configurable options.
+    
+    Attributes:
+        options: Conversion options that control rendering behavior
+    """
     
     def __init__(self, options: Optional[ConversionOptions] = None):
+        """Initialize the Markdown renderer.
+        
+        Args:
+            options: Optional conversion options to customize rendering
+        """
         self.options = options or ConversionOptions()
     
     def render(self, document: MarkdownDocument) -> str:
-        """渲染文档为Markdown文本"""
+        """Render a document object to Markdown text.
+        
+        Args:
+            document: The MarkdownDocument to render
+            
+        Returns:
+            Formatted Markdown text string
+        """
         result = []
         
-        # 渲染标题
-        if document.title and not self._has_h1_in_content(document.content):
+        # Don't render document title if it matches the first H1 content
+        should_render_title = False
+        if document.title:
+            first_h1_content = self._get_first_h1_content(document.content)
+            if not first_h1_content:
+                # No H1 in content, render the title
+                should_render_title = True
+            elif document.title != first_h1_content:
+                # Title differs from first H1, render it
+                should_render_title = True
+            # If title matches first H1, don't render it (avoid duplication)
+        
+        if should_render_title:
             result.append(f"# {document.title}\n")
         
-        # 渲染元数据
+        # Render metadata
         if document.metadata and self.options.include_metadata:
             result.append("<!-- Metadata:")
             for key, value in document.metadata.items():
                 result.append(f"{key}: {value}")
             result.append("-->\n")
         
-        # 渲染内容
+        # Render content
         for element in document.content:
             rendered = self._render_element(element)
             if rendered:
@@ -310,17 +533,77 @@ class MarkdownRenderer:
         return '\n'.join(result)
     
     def _has_h1_in_content(self, elements: List[MarkdownElement]) -> bool:
-        """检查内容中是否已有一级标题"""
+        """Check if content already contains an h1 heading.
+        
+        Args:
+            elements: List of elements to check
+            
+        Returns:
+            True if an h1 heading is found, False otherwise
+        """
         for element in elements:
             if (isinstance(element, HeadingElement) and element.level == 1):
                 return True
+            # Check in children_content if exists
+            if (hasattr(element, 'attributes') and element.attributes and 
+                'children_content' in element.attributes):
+                children_content = element.attributes['children_content']
+                if isinstance(children_content, list):
+                    for child_dict in children_content:
+                        if (child_dict.get('type') == 'heading' and 
+                            child_dict.get('attributes', {}).get('level') == 1):
+                            return True
         return False
     
+    def _get_first_h1_content(self, elements: List[MarkdownElement]) -> Optional[str]:
+        """Get the content of the first H1 heading.
+        
+        Args:
+            elements: List of elements to check
+            
+        Returns:
+            Content of first H1 heading, or None if not found
+        """
+        if not elements:
+            return None
+            
+        # Check if first element is H1
+        first_element = elements[0]
+        if (isinstance(first_element, HeadingElement) and first_element.level == 1):
+            return first_element.content
+            
+        # Check in attributes if it's a processed heading with level info
+        if (hasattr(first_element, 'attributes') and first_element.attributes and 
+            first_element.attributes.get('level') == 1):
+            return first_element.content
+            
+        return None
+    
     def _render_element(self, element: MarkdownElement) -> str:
-        """渲染单个元素"""
+        """Render a single element to Markdown.
+        
+        Args:
+            element: The element to render
+            
+        Returns:
+            Markdown text representation of the element
+        """
         if element.type == ElementType.HEADING:
             level = element.attributes.get("level", 1)
-            return f"{'#' * level} {element.content}\n"
+            result = f"{'#' * level} {element.content}\n"
+            
+            # Render children_content if exists (now it's raw markdown text)
+            if (element.attributes and 'children_content' in element.attributes):
+                children_content = element.attributes['children_content']
+                if children_content and isinstance(children_content, str):
+                    result += "\n" + children_content
+                elif children_content and isinstance(children_content, list):
+                    # Fallback for old format (JSON objects)
+                    children_md = children_content_to_markdown(children_content)
+                    if children_md:
+                        result += "\n" + children_md
+            
+            return result
         
         elif element.type == ElementType.PARAGRAPH:
             return f"{element.content}\n"
@@ -350,13 +633,23 @@ class MarkdownRenderer:
             title_attr = f' "{title}"' if title else ""
             return f"![{alt}]({src}{title_attr})\n"
         
+        elif element.type == ElementType.TABLE:
+            return self._render_table(element)
+        
         elif element.type == ElementType.HORIZONTAL_RULE:
             return "---\n"
         
         return ""
     
     def _render_list(self, list_element: ListElement) -> str:
-        """渲染列表"""
+        """Render a list element to Markdown.
+        
+        Args:
+            list_element: The list element to render
+            
+        Returns:
+            Markdown text representation of the list
+        """
         if not list_element.children:
             return ""
         
@@ -372,17 +665,93 @@ class MarkdownRenderer:
             result.append(f"{prefix}{item.content}")
         
         return '\n'.join(result) + '\n'
+    
+    def _render_table(self, table_element: MarkdownElement) -> str:
+        """Render a table element to Markdown.
+        
+        Args:
+            table_element: The table element to render
+            
+        Returns:
+            Markdown text representation of the table
+        """
+        # Get headers and alignments from attributes
+        headers = table_element.attributes.get("headers", []) if table_element.attributes else []
+        alignments = table_element.attributes.get("alignments", []) if table_element.attributes else []
+        
+        if not headers:
+            return ""
+        
+        result = []
+        
+        # Render headers
+        header_line = "| " + " | ".join(headers) + " |"
+        result.append(header_line)
+        
+        # Render alignment row
+        align_cells = []
+        for alignment in alignments:
+            # Handle both enum and string values
+            if alignment == TableAlignment.LEFT or alignment == "left":
+                align_cells.append(":---")
+            elif alignment == TableAlignment.RIGHT or alignment == "right":
+                align_cells.append("---:")
+            elif alignment == TableAlignment.CENTER or alignment == "center":
+                align_cells.append(":---:")
+            else:
+                align_cells.append("---")
+        
+        # Ensure we have alignment for all headers
+        while len(align_cells) < len(headers):
+            align_cells.append("---")
+        
+        align_line = "| " + " | ".join(align_cells) + " |"
+        result.append(align_line)
+        
+        # Render table rows
+        if table_element.children:
+            for row in table_element.children:
+                if row.type == ElementType.TABLE_ROW and row.children:
+                    row_cells = []
+                    for cell in row.children:
+                        if cell.type == ElementType.TABLE_CELL:
+                            row_cells.append(cell.content or "")
+                    
+                    # Ensure we have cells for all columns
+                    while len(row_cells) < len(headers):
+                        row_cells.append("")
+                    
+                    row_line = "| " + " | ".join(row_cells) + " |"
+                    result.append(row_line)
+        
+        return '\n'.join(result) + '\n'
 
 
 class MarkdownConverter:
-    """Markdown转换器主类"""
+    """Main converter class for Markdown and JSON transformations.
+    
+    This class provides the primary interface for converting between Markdown
+    and JSON formats, coordinating the parser and renderer components.
+    
+    Attributes:
+        parser: MarkdownParser instance for parsing operations
+        renderer: MarkdownRenderer instance for rendering operations
+    """
     
     def __init__(self):
+        """Initialize the converter with parser and renderer instances."""
         self.parser = MarkdownParser()
         self.renderer = MarkdownRenderer()
     
     def convert(self, request: ConversionRequest) -> ConversionResponse:
-        """执行转换"""
+        """Execute format conversion based on the request.
+        
+        Args:
+            request: ConversionRequest specifying source/target formats and content
+            
+        Returns:
+            ConversionResponse containing the result or error information
+        """
         try:
             if request.source_format.lower() == "markdown" and request.target_format.lower() == "json":
                 return self._markdown_to_json(request)
@@ -391,27 +760,37 @@ class MarkdownConverter:
             else:
                 return ConversionResponse(
                     success=False,
-                    error=f"不支持的转换类型: {request.source_format} -> {request.target_format}"
+                    error=f"Unsupported conversion type: {request.source_format} -> {request.target_format}"
                 )
         
         except Exception as e:
             return ConversionResponse(
                 success=False,
-                error=f"转换过程中发生错误: {str(e)}"
+                error=f"Error occurred during conversion: {str(e)}"
             )
     
     def _markdown_to_json(self, request: ConversionRequest) -> ConversionResponse:
-        """Markdown转JSON"""
+        """Convert Markdown to JSON format.
+        
+        Args:
+            request: ConversionRequest with Markdown content
+            
+        Returns:
+            ConversionResponse with JSON result or error
+        """
         if not isinstance(request.content, str):
             return ConversionResponse(
                 success=False,
-                error="Markdown内容必须是字符串类型"
+                error="Markdown content must be a string"
             )
         
-        # 解析Markdown
+        # Parse Markdown
         document = self.parser.parse(request.content)
         
-        # 转换为JSON
+        # Add children_content to headings and restructure
+        document.content = self._add_children_content_to_headings(document.content)
+        
+        # Convert to JSON
         json_result = document.model_dump()
         
         return ConversionResponse(
@@ -425,37 +804,44 @@ class MarkdownConverter:
         )
     
     def _json_to_markdown(self, request: ConversionRequest) -> ConversionResponse:
-        """JSON转Markdown"""
+        """Convert JSON to Markdown format.
+        
+        Args:
+            request: ConversionRequest with JSON content
+            
+        Returns:
+            ConversionResponse with Markdown result or error
+        """
         if isinstance(request.content, str):
             try:
                 json_data = json.loads(request.content)
             except json.JSONDecodeError as e:
                 return ConversionResponse(
                     success=False,
-                    error=f"JSON解析错误: {str(e)}"
+                    error=f"JSON parsing error: {str(e)}"
                 )
         elif isinstance(request.content, dict):
             json_data = request.content
         else:
             return ConversionResponse(
                 success=False,
-                error="JSON内容必须是字符串或字典类型"
+                error="JSON content must be a string or dictionary"
             )
         
-        # 从JSON创建文档对象
+        # Create document object from JSON
         try:
             document = MarkdownDocument(**json_data)
         except Exception as e:
             return ConversionResponse(
                 success=False,
-                error=f"JSON数据格式错误: {str(e)}"
+                error=f"JSON data format error: {str(e)}"
             )
         
-        # 设置渲染选项
+        # Set rendering options
         if request.options:
             self.renderer = MarkdownRenderer(request.options)
         
-        # 渲染为Markdown
+        # Render to Markdown
         markdown_result = self.renderer.render(document)
         
         return ConversionResponse(
@@ -467,11 +853,134 @@ class MarkdownConverter:
                 "has_title": document.title is not None
             }
         )
+    
+    def _add_children_content_to_headings(self, elements: List[MarkdownElement]) -> List[MarkdownElement]:
+        """Add children_content field to heading elements and create hierarchical structure.
+        
+        Args:
+            elements: List of document elements to process
+            
+        Returns:
+            Processed list of elements with hierarchical structure
+        """
+        result = []
+        i = 0
+        
+        while i < len(elements):
+            element = elements[i]
+            
+            # If current element is a heading, collect its children
+            if isinstance(element, HeadingElement):
+                current_level = element.level
+                children_content = []
+                
+                # Collect all elements until next heading of same or higher level
+                j = i + 1
+                while j < len(elements):
+                    next_element = elements[j]
+                    
+                    # Stop if we encounter a heading of same or higher level
+                    if (isinstance(next_element, HeadingElement) and 
+                        next_element.level <= current_level):
+                        break
+                    
+                    children_content.append(next_element)
+                    j += 1
+                
+                # Store children as JSON objects and children_content as raw markdown
+                if children_content:
+                    processed_children = self._add_children_content_to_headings(children_content)
+                    children_dict = [self._element_to_dict(child) for child in processed_children]
+                    
+                    # Generate raw markdown for children_content
+                    children_markdown = self._elements_to_markdown(processed_children)
+                else:
+                    children_dict = []
+                    children_markdown = ""
+                
+                # Add both children and children_content to the heading's attributes
+                if not hasattr(element, 'attributes') or element.attributes is None:
+                    element.attributes = {}
+                
+                # Store JSON structure in children
+                if children_dict:
+                    element.children = [MarkdownElement(type=ElementType.TEXT, content="") for _ in children_dict]
+                    element.attributes['children_json'] = children_dict
+                
+                # Store raw markdown in children_content
+                element.attributes['children_content'] = children_markdown
+                
+                result.append(element)
+                # Skip all the children elements since they're now in children_content
+                i = j
+            else:
+                # Non-heading element, add as-is
+                result.append(element)
+                i += 1
+        
+        return result
+    
+    def _elements_to_markdown(self, elements: List[MarkdownElement]) -> str:
+        """Convert a list of elements to raw Markdown text.
+        
+        Args:
+            elements: List of MarkdownElement objects
+            
+        Returns:
+            Raw Markdown text string
+        """
+        if not elements:
+            return ""
+        
+        markdown_parts = []
+        temp_renderer = MarkdownRenderer()
+        
+        for element in elements:
+            rendered = temp_renderer._render_element(element)
+            if rendered:
+                markdown_parts.append(rendered.rstrip())
+        
+        return '\n\n'.join(markdown_parts)
+    
+    def _element_to_dict(self, element: MarkdownElement) -> Dict[str, Any]:
+        """Convert a MarkdownElement to dictionary representation.
+        
+        Args:
+            element: MarkdownElement to convert
+            
+        Returns:
+            Dictionary representation of the element
+        """
+        result = {
+            "type": element.type.value if hasattr(element.type, 'value') else str(element.type),
+            "content": element.content,
+            "children": None,
+            "attributes": element.attributes
+        }
+        
+        # Handle special cases for different element types
+        if isinstance(element, ListElement) and element.children:
+            result["children"] = [self._element_to_dict(child) for child in element.children]
+        elif hasattr(element, 'children') and element.children:
+            result["children"] = [self._element_to_dict(child) for child in element.children]
+            
+        return result
 
 
-# 便捷函数
+# Convenience functions
 def markdown_to_json(markdown_text: str, options: Optional[ConversionOptions] = None) -> Dict[str, Any]:
-    """Markdown文本转JSON（便捷函数）"""
+    """Convert Markdown text to JSON (convenience function).
+    
+    Args:
+        markdown_text: The Markdown text to convert
+        options: Optional conversion options
+        
+    Returns:
+        Dictionary containing the JSON representation
+        
+    Raises:
+        ValueError: If conversion fails
+    """
     converter = MarkdownConverter()
     request = ConversionRequest(
         source_format="markdown",
@@ -484,11 +993,22 @@ def markdown_to_json(markdown_text: str, options: Optional[ConversionOptions] = 
     if response.success:
         return response.result
     else:
-        raise ValueError(f"转换失败: {response.error}")
+        raise ValueError(f"Conversion failed: {response.error}")
 
 
 def json_to_markdown(json_data: Union[str, Dict[str, Any]], options: Optional[ConversionOptions] = None) -> str:
-    """JSON转Markdown文本（便捷函数）"""
+    """Convert JSON to Markdown text (convenience function).
+    
+    Args:
+        json_data: JSON data as string or dictionary
+        options: Optional conversion options
+        
+    Returns:
+        Markdown text string
+        
+    Raises:
+        ValueError: If conversion fails
+    """
     converter = MarkdownConverter()
     request = ConversionRequest(
         source_format="json",
@@ -501,4 +1021,117 @@ def json_to_markdown(json_data: Union[str, Dict[str, Any]], options: Optional[Co
     if response.success:
         return response.result
     else:
-        raise ValueError(f"转换失败: {response.error}")
+        raise ValueError(f"Conversion failed: {response.error}")
+
+
+def children_content_to_markdown(children_content: List[Dict[str, Any]], indent_level: int = 0) -> str:
+    """
+    Convert children_content JSON structure to markdown format.
+    
+    Args:
+        children_content (List[Dict[str, Any]]): List of child elements in JSON format
+        indent_level (int): Current indentation level for nested structures (not used for lossless conversion)
+        
+    Returns:
+        str: Markdown formatted string
+    """
+    if not children_content:
+        return ""
+    
+    markdown_parts = []
+    
+    for item in children_content:
+        item_type = item.get("type", "")
+        content = item.get("content", "")
+        attributes = item.get("attributes", {}) or {}
+        children = item.get("children", []) or []
+        
+        if item_type == "heading":
+            level = attributes.get("level", 1)
+            markdown_parts.append(f"{'#' * level} {content}")
+            
+            # Process children_content of this heading if exists
+            heading_children_content = attributes.get("children_content", [])
+            if heading_children_content:
+                child_markdown = children_content_to_markdown(heading_children_content, 0)
+                if child_markdown:
+                    markdown_parts.append(child_markdown)
+                    
+        elif item_type == "paragraph":
+            if content:
+                markdown_parts.append(f"{content}")
+                
+        elif item_type == "list":
+            list_type = attributes.get("list_type", "unordered")
+            start = attributes.get("start", 1)
+            
+            for i, child in enumerate(children):
+                child_content = child.get("content", "")
+                if list_type == "ordered":
+                    prefix = f"{start + i}. "
+                else:
+                    prefix = "- "
+                markdown_parts.append(f"{prefix}{child_content}")
+                
+        elif item_type == "code_block":
+            language = attributes.get("language", "")
+            markdown_parts.append(f"```{language}")
+            markdown_parts.append(f"{content}")
+            markdown_parts.append(f"```")
+            
+        elif item_type == "blockquote":
+            lines = content.split('\n') if content else []
+            for line in lines:
+                markdown_parts.append(f"> {line}")
+                
+        elif item_type == "table":
+            headers = attributes.get("headers", [])
+            alignments = attributes.get("alignments", [])
+            
+            if headers:
+                # Render headers
+                header_line = "| " + " | ".join(headers) + " |"
+                markdown_parts.append(header_line)
+                
+                # Render alignment row
+                align_cells = []
+                for align in alignments:
+                    if align == "left":
+                        align_cells.append(":---")
+                    elif align == "right":
+                        align_cells.append("---:")
+                    elif align == "center":
+                        align_cells.append(":---:")
+                    else:
+                        align_cells.append("---")
+                
+                while len(align_cells) < len(headers):
+                    align_cells.append("---")
+                
+                align_line = "| " + " | ".join(align_cells) + " |"
+                markdown_parts.append(align_line)
+                
+                # Render table rows
+                for child in children:
+                    if child.get("type") == "table_row":
+                        row_children = child.get("children", [])
+                        row_cells = []
+                        for cell in row_children:
+                            if cell.get("type") == "table_cell":
+                                row_cells.append(cell.get("content", ""))
+                        
+                        while len(row_cells) < len(headers):
+                            row_cells.append("")
+                        
+                        row_line = "| " + " | ".join(row_cells) + " |"
+                        markdown_parts.append(row_line)
+            
+        elif item_type == "horizontal_rule":
+            markdown_parts.append("---")
+            
+        else:
+            # Handle other types as plain content
+            if content:
+                markdown_parts.append(f"{content}")
+    
+    return "\n\n".join(markdown_parts)
