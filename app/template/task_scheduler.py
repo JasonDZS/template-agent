@@ -33,24 +33,16 @@ class TaskScheduler:
         # Task execution system
         self.executor_registry = ExecutorRegistry()
         
-        # Legacy handlers for backward compatibility
-        self.generation_handler: Optional[Callable] = None
-        self.merge_handler: Optional[Callable] = None
-        
         # Logging
         self.logger = logger or logging.getLogger(f"TaskScheduler")
     
     def set_generation_handler(self, handler: Callable[[Task], str]) -> None:
         """Set handler for generation tasks."""
-        self.generation_handler = handler
-        # Also register with executor registry for backward compatibility
         gen_executor = GenerationTaskExecutor(generation_handler=handler)
         self.executor_registry.register(gen_executor)
     
     def set_merge_handler(self, handler: Callable[[Task, List[str]], str]) -> None:
         """Set handler for merge tasks."""
-        self.merge_handler = handler
-        # Also register with executor registry for backward compatibility
         merge_executor = MergeTaskExecutor(merge_handler=handler)
         self.executor_registry.register(merge_executor)
     
@@ -91,6 +83,11 @@ class TaskScheduler:
     
     async def execute_task(self, task: Task) -> None:
         """Execute a single task."""
+        # Check if task was cancelled before execution
+        if task.status == TaskStatus.CANCELLED:
+            self.logger.info(f"🚫 Task {task.title} was cancelled before execution")
+            return
+        
         # Log task start
         self.logger.info(f"🚀 Starting Task - {task.title} ({task.task_type.value})")
         self.logger.info(f"   Task ID: {task.id}")
@@ -101,6 +98,11 @@ class TaskScheduler:
         self.running_tasks.add(task.id)
         
         try:
+            # Check if task was cancelled after being marked as running
+            if task.status == TaskStatus.CANCELLED:
+                self.logger.info(f"🚫 Task {task.title} was cancelled during execution")
+                return
+                
             # Try to use new executor system first
             executor = self.executor_registry.get_executor(task)
             
@@ -119,6 +121,11 @@ class TaskScheduler:
                 # Log dependency collection
                 self.logger.debug(f"   Collected {len(dependencies_results)} dependency results")
                 
+                # Final cancellation check before expensive execution
+                if task.status == TaskStatus.CANCELLED:
+                    self.logger.info(f"🚫 Task {task.title} was cancelled before execution")
+                    return
+                
                 task_input = executor.prepare_input(task, dependencies_results)
                 task_output = await executor.execute(task_input)
                 content = task_output.content
@@ -128,14 +135,12 @@ class TaskScheduler:
                 task.output_metadata = task_output.metadata
                 
             else:
-                self.logger.debug("   Using legacy handler system")
-                
-                # Fall back to legacy handler system
-                if task.task_type == TaskType.GENERATION:
-                    content = await self._execute_generation_task(task)
-                else:  # MERGE
-                    content = await self._execute_merge_task(task)
-                metadata = {}  # Legacy system has no metadata
+                raise RuntimeError(f"No executor found for task type: {task.task_type}")
+            
+            # Check if task was cancelled after execution but before completion
+            if task.status == TaskStatus.CANCELLED:
+                self.logger.info(f"🚫 Task {task.title} was cancelled after execution")
+                return
             
             task.mark_completed(content=content, metadata=metadata)
             self.completed_tasks.add(task.id)
@@ -163,36 +168,6 @@ class TaskScheduler:
             self.logger.debug(f"   Completed: {len(self.completed_tasks)}")
             self.logger.debug(f"   Failed: {len(self.failed_tasks)}")
     
-    async def _execute_generation_task(self, task: Task) -> str:
-        """Execute generation task using legacy handler."""
-        if not self.generation_handler:
-            raise RuntimeError("No generation handler set")
-        
-        # Call generation handler (could be async or sync)
-        handler = self.generation_handler
-        if asyncio.iscoroutinefunction(handler):
-            return await handler(task)
-        else:
-            return handler(task)
-    
-    async def _execute_merge_task(self, task: Task) -> str:
-        """Execute merge task using legacy handler."""
-        if not self.merge_handler:
-            raise RuntimeError("No merge handler set")
-        
-        # Get content from all child tasks in the correct order
-        child_contents = []
-        for dep_id in task.dependencies:  # dependencies are now ordered
-            dep_task = self.tasks[dep_id]
-            if dep_task.result and dep_task.result.content:
-                child_contents.append(dep_task.result.content)
-        
-        # Call merge handler
-        handler = self.merge_handler
-        if asyncio.iscoroutinefunction(handler):
-            return await handler(task, child_contents)
-        else:
-            return handler(task, child_contents)
     
     def get_progress(self) -> Dict[str, Any]:
         """Get execution progress information."""

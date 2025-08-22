@@ -143,6 +143,10 @@ class MarkdownParser:
             self.current_pos += 1
             return MarkdownElement(type=ElementType.HORIZONTAL_RULE)
         
+        # Parse table
+        if '|' in line:
+            return self._parse_table()
+        
         # Parse image
         img_match = re.match(r'!\[([^\]]*)\]\(([^)]+)\)', line)
         if img_match:
@@ -290,6 +294,132 @@ class MarkdownParser:
         
         return ImageElement(src=src, alt=alt, title=title)
     
+    def _parse_table(self) -> MarkdownElement:
+        """Parse a table element.
+        
+        Returns:
+            TableElement with headers, alignments, and row data
+        """
+        table_lines = []
+        
+        # Collect all table lines including continuation lines
+        while self.current_pos < len(self.lines):
+            line = self.lines[self.current_pos].strip()
+            
+            # Check if this line contains table syntax
+            if '|' in line:
+                table_lines.append(line)
+                self.current_pos += 1
+                
+                # Check for continuation lines (lines that don't start with | but are part of a cell)
+                while (self.current_pos < len(self.lines) and 
+                       self.lines[self.current_pos].strip() and
+                       not self.lines[self.current_pos].strip().startswith('|') and
+                       '|' not in self.lines[self.current_pos].strip() and
+                       not self.lines[self.current_pos].strip().startswith('#') and
+                       not self.lines[self.current_pos].strip().startswith('```')):
+                    # This is a continuation line, add it to table_lines
+                    table_lines.append(self.lines[self.current_pos].strip())
+                    self.current_pos += 1
+                    
+            elif line == '':
+                # Empty line, continue to check next line
+                self.current_pos += 1
+                continue
+            else:
+                # Not a table line, stop parsing
+                break
+        
+        if not table_lines:
+            # Fallback if no valid table found
+            self.current_pos += 1
+            return MarkdownElement(type=ElementType.PARAGRAPH, content=self.lines[self.current_pos - 1])
+        
+        # Parse headers from first line
+        headers = []
+        if table_lines:
+            header_line = table_lines[0]
+            header_cells = [cell.strip() for cell in header_line.split('|') if cell.strip()]
+            headers = header_cells
+        
+        # Parse alignment from second line (if exists)
+        alignments = []
+        alignment_line_idx = -1
+        if len(table_lines) > 1:
+            for i, line in enumerate(table_lines[1:], 1):
+                if re.match(r'^[\|\s\-:]+$', line):
+                    alignment_line_idx = i
+                    align_cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+                    for cell in align_cells:
+                        if cell.startswith(':') and cell.endswith(':'):
+                            alignments.append(TableAlignment.CENTER)
+                        elif cell.endswith(':'):
+                            alignments.append(TableAlignment.RIGHT)
+                        elif cell.startswith(':'):
+                            alignments.append(TableAlignment.LEFT)
+                        else:
+                            alignments.append(TableAlignment.NONE)
+                    break
+        
+        # Parse table rows (skip header and alignment lines)
+        table_rows = []
+        start_idx = 1 if alignment_line_idx == -1 else alignment_line_idx + 1
+        
+        i = start_idx
+        current_row_cells = []
+        
+        while i < len(table_lines):
+            line = table_lines[i]
+            
+            if '|' in line:
+                # This is a proper table row
+                if current_row_cells:
+                    # We have a pending row, finalize it
+                    row_element = MarkdownElement(
+                        type=ElementType.TABLE_ROW,
+                        content="",
+                        children=[
+                            MarkdownElement(type=ElementType.TABLE_CELL, content=cell)
+                            for cell in current_row_cells
+                        ]
+                    )
+                    table_rows.append(row_element)
+                    current_row_cells = []
+                
+                # Parse new row
+                row_cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+                current_row_cells = row_cells
+                
+            else:
+                # This is a continuation line for multi-line cell
+                if current_row_cells:
+                    # Add to the last cell in current row
+                    current_row_cells[-1] += " " + line
+            
+            i += 1
+        
+        # Don't forget to add the last row if exists
+        if current_row_cells:
+            row_element = MarkdownElement(
+                type=ElementType.TABLE_ROW,
+                content="",
+                children=[
+                    MarkdownElement(type=ElementType.TABLE_CELL, content=cell)
+                    for cell in current_row_cells
+                ]
+            )
+            table_rows.append(row_element)
+        
+        # Ensure we have enough alignments for all headers
+        while len(alignments) < len(headers):
+            alignments.append(TableAlignment.NONE)
+        
+        return TableElement(
+            headers=headers,
+            alignments=alignments,
+            children=table_rows
+        )
+    
     def _parse_paragraph(self) -> MarkdownElement:
         """Parse a paragraph element.
         
@@ -305,6 +435,7 @@ class MarkdownParser:
             if (line.strip() == '' or 
                 line.strip().startswith('#') or
                 line.strip().startswith('```') or
+                '|' in line.strip() or
                 re.match(r'^[\-\*\+]\s', line.strip()) or
                 re.match(r'^\d+\.\s', line.strip())):
                 break
@@ -371,8 +502,19 @@ class MarkdownRenderer:
         """
         result = []
         
-        # Render title
-        if document.title and not self._has_h1_in_content(document.content):
+        # Don't render document title if it matches the first H1 content
+        should_render_title = False
+        if document.title:
+            first_h1_content = self._get_first_h1_content(document.content)
+            if not first_h1_content:
+                # No H1 in content, render the title
+                should_render_title = True
+            elif document.title != first_h1_content:
+                # Title differs from first H1, render it
+                should_render_title = True
+            # If title matches first H1, don't render it (avoid duplication)
+        
+        if should_render_title:
             result.append(f"# {document.title}\n")
         
         # Render metadata
@@ -402,7 +544,40 @@ class MarkdownRenderer:
         for element in elements:
             if (isinstance(element, HeadingElement) and element.level == 1):
                 return True
+            # Check in children_content if exists
+            if (hasattr(element, 'attributes') and element.attributes and 
+                'children_content' in element.attributes):
+                children_content = element.attributes['children_content']
+                if isinstance(children_content, list):
+                    for child_dict in children_content:
+                        if (child_dict.get('type') == 'heading' and 
+                            child_dict.get('attributes', {}).get('level') == 1):
+                            return True
         return False
+    
+    def _get_first_h1_content(self, elements: List[MarkdownElement]) -> Optional[str]:
+        """Get the content of the first H1 heading.
+        
+        Args:
+            elements: List of elements to check
+            
+        Returns:
+            Content of first H1 heading, or None if not found
+        """
+        if not elements:
+            return None
+            
+        # Check if first element is H1
+        first_element = elements[0]
+        if (isinstance(first_element, HeadingElement) and first_element.level == 1):
+            return first_element.content
+            
+        # Check in attributes if it's a processed heading with level info
+        if (hasattr(first_element, 'attributes') and first_element.attributes and 
+            first_element.attributes.get('level') == 1):
+            return first_element.content
+            
+        return None
     
     def _render_element(self, element: MarkdownElement) -> str:
         """Render a single element to Markdown.
@@ -415,7 +590,20 @@ class MarkdownRenderer:
         """
         if element.type == ElementType.HEADING:
             level = element.attributes.get("level", 1)
-            return f"{'#' * level} {element.content}\n"
+            result = f"{'#' * level} {element.content}\n"
+            
+            # Render children_content if exists (now it's raw markdown text)
+            if (element.attributes and 'children_content' in element.attributes):
+                children_content = element.attributes['children_content']
+                if children_content and isinstance(children_content, str):
+                    result += "\n" + children_content
+                elif children_content and isinstance(children_content, list):
+                    # Fallback for old format (JSON objects)
+                    children_md = children_content_to_markdown(children_content)
+                    if children_md:
+                        result += "\n" + children_md
+            
+            return result
         
         elif element.type == ElementType.PARAGRAPH:
             return f"{element.content}\n"
@@ -445,6 +633,9 @@ class MarkdownRenderer:
             title_attr = f' "{title}"' if title else ""
             return f"![{alt}]({src}{title_attr})\n"
         
+        elif element.type == ElementType.TABLE:
+            return self._render_table(element)
+        
         elif element.type == ElementType.HORIZONTAL_RULE:
             return "---\n"
         
@@ -472,6 +663,66 @@ class MarkdownRenderer:
             else:
                 prefix = "- "
             result.append(f"{prefix}{item.content}")
+        
+        return '\n'.join(result) + '\n'
+    
+    def _render_table(self, table_element: MarkdownElement) -> str:
+        """Render a table element to Markdown.
+        
+        Args:
+            table_element: The table element to render
+            
+        Returns:
+            Markdown text representation of the table
+        """
+        # Get headers and alignments from attributes
+        headers = table_element.attributes.get("headers", []) if table_element.attributes else []
+        alignments = table_element.attributes.get("alignments", []) if table_element.attributes else []
+        
+        if not headers:
+            return ""
+        
+        result = []
+        
+        # Render headers
+        header_line = "| " + " | ".join(headers) + " |"
+        result.append(header_line)
+        
+        # Render alignment row
+        align_cells = []
+        for alignment in alignments:
+            # Handle both enum and string values
+            if alignment == TableAlignment.LEFT or alignment == "left":
+                align_cells.append(":---")
+            elif alignment == TableAlignment.RIGHT or alignment == "right":
+                align_cells.append("---:")
+            elif alignment == TableAlignment.CENTER or alignment == "center":
+                align_cells.append(":---:")
+            else:
+                align_cells.append("---")
+        
+        # Ensure we have alignment for all headers
+        while len(align_cells) < len(headers):
+            align_cells.append("---")
+        
+        align_line = "| " + " | ".join(align_cells) + " |"
+        result.append(align_line)
+        
+        # Render table rows
+        if table_element.children:
+            for row in table_element.children:
+                if row.type == ElementType.TABLE_ROW and row.children:
+                    row_cells = []
+                    for cell in row.children:
+                        if cell.type == ElementType.TABLE_CELL:
+                            row_cells.append(cell.content or "")
+                    
+                    # Ensure we have cells for all columns
+                    while len(row_cells) < len(headers):
+                        row_cells.append("")
+                    
+                    row_line = "| " + " | ".join(row_cells) + " |"
+                    result.append(row_line)
         
         return '\n'.join(result) + '\n'
 
@@ -636,17 +887,28 @@ class MarkdownConverter:
                     children_content.append(next_element)
                     j += 1
                 
-                # Process children recursively to handle nested headings
+                # Store children as JSON objects and children_content as raw markdown
                 if children_content:
                     processed_children = self._add_children_content_to_headings(children_content)
                     children_dict = [self._element_to_dict(child) for child in processed_children]
+                    
+                    # Generate raw markdown for children_content
+                    children_markdown = self._elements_to_markdown(processed_children)
                 else:
                     children_dict = []
+                    children_markdown = ""
                 
-                # Add children_content to the heading's attributes
+                # Add both children and children_content to the heading's attributes
                 if not hasattr(element, 'attributes') or element.attributes is None:
                     element.attributes = {}
-                element.attributes['children_content'] = children_dict
+                
+                # Store JSON structure in children
+                if children_dict:
+                    element.children = [MarkdownElement(type=ElementType.TEXT, content="") for _ in children_dict]
+                    element.attributes['children_json'] = children_dict
+                
+                # Store raw markdown in children_content
+                element.attributes['children_content'] = children_markdown
                 
                 result.append(element)
                 # Skip all the children elements since they're now in children_content
@@ -657,6 +919,28 @@ class MarkdownConverter:
                 i += 1
         
         return result
+    
+    def _elements_to_markdown(self, elements: List[MarkdownElement]) -> str:
+        """Convert a list of elements to raw Markdown text.
+        
+        Args:
+            elements: List of MarkdownElement objects
+            
+        Returns:
+            Raw Markdown text string
+        """
+        if not elements:
+            return ""
+        
+        markdown_parts = []
+        temp_renderer = MarkdownRenderer()
+        
+        for element in elements:
+            rendered = temp_renderer._render_element(element)
+            if rendered:
+                markdown_parts.append(rendered.rstrip())
+        
+        return '\n\n'.join(markdown_parts)
     
     def _element_to_dict(self, element: MarkdownElement) -> Dict[str, Any]:
         """Convert a MarkdownElement to dictionary representation.
@@ -746,7 +1030,7 @@ def children_content_to_markdown(children_content: List[Dict[str, Any]], indent_
     
     Args:
         children_content (List[Dict[str, Any]]): List of child elements in JSON format
-        indent_level (int): Current indentation level for nested structures
+        indent_level (int): Current indentation level for nested structures (not used for lossless conversion)
         
     Returns:
         str: Markdown formatted string
@@ -755,7 +1039,6 @@ def children_content_to_markdown(children_content: List[Dict[str, Any]], indent_
         return ""
     
     markdown_parts = []
-    indent = "  " * indent_level
     
     for item in children_content:
         item_type = item.get("type", "")
@@ -770,13 +1053,13 @@ def children_content_to_markdown(children_content: List[Dict[str, Any]], indent_
             # Process children_content of this heading if exists
             heading_children_content = attributes.get("children_content", [])
             if heading_children_content:
-                child_markdown = children_content_to_markdown(heading_children_content, indent_level + 1)
+                child_markdown = children_content_to_markdown(heading_children_content, 0)
                 if child_markdown:
                     markdown_parts.append(child_markdown)
                     
         elif item_type == "paragraph":
             if content:
-                markdown_parts.append(f"{indent}{content}")
+                markdown_parts.append(f"{content}")
                 
         elif item_type == "list":
             list_type = attributes.get("list_type", "unordered")
@@ -788,25 +1071,67 @@ def children_content_to_markdown(children_content: List[Dict[str, Any]], indent_
                     prefix = f"{start + i}. "
                 else:
                     prefix = "- "
-                markdown_parts.append(f"{indent}{prefix}{child_content}")
+                markdown_parts.append(f"{prefix}{child_content}")
                 
         elif item_type == "code_block":
             language = attributes.get("language", "")
-            markdown_parts.append(f"{indent}```{language}")
-            markdown_parts.append(f"{indent}{content}")
-            markdown_parts.append(f"{indent}```")
+            markdown_parts.append(f"```{language}")
+            markdown_parts.append(f"{content}")
+            markdown_parts.append(f"```")
             
         elif item_type == "blockquote":
             lines = content.split('\n') if content else []
             for line in lines:
-                markdown_parts.append(f"{indent}> {line}")
+                markdown_parts.append(f"> {line}")
                 
+        elif item_type == "table":
+            headers = attributes.get("headers", [])
+            alignments = attributes.get("alignments", [])
+            
+            if headers:
+                # Render headers
+                header_line = "| " + " | ".join(headers) + " |"
+                markdown_parts.append(header_line)
+                
+                # Render alignment row
+                align_cells = []
+                for align in alignments:
+                    if align == "left":
+                        align_cells.append(":---")
+                    elif align == "right":
+                        align_cells.append("---:")
+                    elif align == "center":
+                        align_cells.append(":---:")
+                    else:
+                        align_cells.append("---")
+                
+                while len(align_cells) < len(headers):
+                    align_cells.append("---")
+                
+                align_line = "| " + " | ".join(align_cells) + " |"
+                markdown_parts.append(align_line)
+                
+                # Render table rows
+                for child in children:
+                    if child.get("type") == "table_row":
+                        row_children = child.get("children", [])
+                        row_cells = []
+                        for cell in row_children:
+                            if cell.get("type") == "table_cell":
+                                row_cells.append(cell.get("content", ""))
+                        
+                        while len(row_cells) < len(headers):
+                            row_cells.append("")
+                        
+                        row_line = "| " + " | ".join(row_cells) + " |"
+                        markdown_parts.append(row_line)
+            
         elif item_type == "horizontal_rule":
-            markdown_parts.append(f"{indent}---")
+            markdown_parts.append("---")
             
         else:
             # Handle other types as plain content
             if content:
-                markdown_parts.append(f"{indent}{content}")
+                markdown_parts.append(f"{content}")
     
-    return "\n".join(markdown_parts)
+    return "\n\n".join(markdown_parts)

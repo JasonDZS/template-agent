@@ -591,7 +591,8 @@ class ReportGeneratorAgent(BaseAgent):
                 
                 try:
                     # Run section agent
-                    generated_content = await section_agent.run_section_generation()
+                    await section_agent.run()
+                    generated_content = section_agent.get_content()
                     
                     if generated_content:
                         section["generated_content"] = generated_content
@@ -686,7 +687,8 @@ class ReportGeneratorAgent(BaseAgent):
             section_title = section.get("content", f"Section {section_idx + 1}")
             logger.info(f"Starting agent-based section generation: {section_title}")
             
-            content = await agent.run_section_generation()
+            await agent.run()
+            content = agent.get_content()
             return content if content else f"[Empty content] {section_title}"
         except Exception as e:
             logger.error(f"Agent generation for section {section_idx + 1} failed: {e}")

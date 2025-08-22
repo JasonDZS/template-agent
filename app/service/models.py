@@ -43,7 +43,7 @@ class ReportGenerationRequest(BaseModel):
     knowledge_base_path: str = Field(default="workdir/documents", description="Path to knowledge base directory")
     max_concurrent: int = Field(default=3, ge=1, le=10, description="Maximum concurrent tasks")
     enable_streaming: bool = Field(default=True, description="Enable streaming output")
-    enable_model_merge: bool = Field(default=True, description="Enable intelligent model-based merging")
+    enable_model_merge: bool = Field(default=False, description="Enable intelligent model-based merging")
     report_title: Optional[str] = Field(default=None, description="Custom report title")
     output_path: Optional[str] = Field(default=None, description="Custom output path for final report")
     

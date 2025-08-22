@@ -96,7 +96,7 @@ pip install -e .
 
 1. Copy the environment configuration file:
 ```bash
-cp .env.example .env
+cp .env.example.txt .env
 ```
 
 2. Edit the `.env` file to configure API information:

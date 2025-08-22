@@ -187,7 +187,7 @@ class KnowledgeRetrievalTool(BaseTool):
             logger.info(f"Initializing knowledge base, path: {self.knowledge_base_path}")
             
             # Initialize ChromaDB client
-            chroma_db_path = Path("workdir") / "chroma_db"
+            chroma_db_path = Path(settings.workdir) / "chroma_db"
             chroma_db_path.mkdir(parents=True, exist_ok=True)
             
             self.client = chromadb.PersistentClient(

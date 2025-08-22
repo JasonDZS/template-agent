@@ -24,7 +24,7 @@ class LLMSettings(BaseModel):
 class Settings(BaseModel):
     _instance: ClassVar[Optional["Settings"]] = None
 
-    workdir: str = Field(default="workdir")
+    workdir: str = Field(default="workdir/finance")
     template: str = Field(default="workdir/template/产品需求评审会议.md")
 
     # OpenAI settings

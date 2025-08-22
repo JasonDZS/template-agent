@@ -236,10 +236,12 @@ def _convert_content_to_tree(content_list: List[Dict[str, Any]], parent: Markdow
         parent.add_child(node)
         doc.node_index[node.id] = node
         
-        # Process children_content recursively
+        # Process children_json if available (latest format)
         attributes = element.get("attributes") or {}
-        if attributes and "children_content" in attributes and attributes["children_content"]:
-            _convert_content_to_tree(attributes["children_content"], node, doc)
+        if attributes and "children_json" in attributes and attributes["children_json"]:
+            children_json = attributes["children_json"]
+            if isinstance(children_json, list):
+                _convert_content_to_tree(children_json, node, doc)
 
 
 def _create_node_from_element(element: Dict[str, Any]) -> MarkdownNode:

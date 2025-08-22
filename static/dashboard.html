@@ -618,7 +618,7 @@
                     
                     <div class="form-group">
                         <label for="knowledgeBasePath">知识库路径:</label>
-                        <input type="text" id="knowledgeBasePath" value="workdir/documents" required>
+                        <input type="text" id="knowledgeBasePath" value="workdir/finance/documents" required>
                     </div>
                     
                     <div class="form-group">
@@ -776,9 +776,9 @@
                 this.websocket = null;
                 this.isConnected = false;
                 this.lastProgressData = null; // Cache for progress data
-                // Try to use current origin, fallback to localhost:8082
-                this.baseUrl = window.location.origin.includes('808') ? 
-                              window.location.origin : 'http://localhost:8082';
+                // Try to use current origin, fallback to localhost:8123
+                this.baseUrl = window.location.origin.includes('812') ? 
+                              window.location.origin : 'http://localhost:8123';
                 this.websocketUrl = this.baseUrl.replace('http', 'ws');
                 
                 this.initEventListeners();
@@ -1116,7 +1116,30 @@
                     return;
                 }
                 
-                queueDiv.innerHTML = tasks.map(task => `
+                // Sort tasks by priority: completed first, then running/streaming, then pending/ready
+                const sortedTasks = tasks.slice().sort((a, b) => {
+                    const statusPriority = {
+                        'completed': 1,    // 完成的任务排在最前面
+                        'failed': 2,       // 失败的任务也排在前面
+                        'cancelled': 3,    // 取消的任务
+                        'running': 4,      // 正在运行的任务
+                        'streaming': 4,    // 流式输出的任务(与运行同级)
+                        'ready': 5,        // 就绪的任务
+                        'pending': 6       // 等待的任务排在最后
+                    };
+                    
+                    const aPriority = statusPriority[a.status] || 7;
+                    const bPriority = statusPriority[b.status] || 7;
+                    
+                    // 如果状态优先级相同，按进度降序排序
+                    if (aPriority === bPriority) {
+                        return b.progress - a.progress;
+                    }
+                    
+                    return aPriority - bPriority;
+                });
+                
+                queueDiv.innerHTML = sortedTasks.map(task => `
                     <div class="task-item task-${task.status} task-clickable" id="task-${task.task_id}" onclick="dashboard.showTaskDetails('${task.task_id}')">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                             <div style="display: flex; align-items: center; gap: 10px;">

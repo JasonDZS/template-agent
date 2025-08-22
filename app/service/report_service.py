@@ -222,11 +222,18 @@ class ReportGenerationService:
         job.status = "cancelled"
         job.end_time = datetime.now()
         
-        # Update all running tasks to cancelled
+        # Update all running and pending tasks to cancelled
         for task in job.tasks.values():
-            if task.status == TaskStatus.RUNNING:
+            if task.status in [TaskStatus.RUNNING, TaskStatus.PENDING, TaskStatus.READY]:
                 task.status = TaskStatus.CANCELLED
                 task.end_time = datetime.now()
+        
+        # Cancel scheduler tasks if scheduler exists  
+        if hasattr(job, 'scheduler') and job.scheduler:
+            # Update scheduler task status
+            for scheduler_task in job.scheduler.tasks.values():
+                if scheduler_task.status in [TaskStatus.RUNNING, TaskStatus.PENDING, TaskStatus.READY]:
+                    scheduler_task.status = TaskStatus.CANCELLED
         
         # Send cancellation message to connected clients
         await self._broadcast_job_message(
@@ -335,7 +342,6 @@ class ReportGenerationService:
                 stream_callback=stream_callback if request.enable_streaming else None
             )
             merge_executor = StreamingMergeExecutor(
-                knowledge_base_path=request.knowledge_base_path,
                 enable_model_merge=request.enable_model_merge,
                 stream_callback=stream_callback if request.enable_streaming else None
             )
@@ -402,81 +408,119 @@ class ReportGenerationService:
             )
     
     async def _execute_scheduler_tasks(self, scheduler: TaskScheduler, job: ReportJob) -> None:
-        """Execute tasks using the scheduler."""
+        """Execute tasks using an event-driven scheduler that starts new tasks immediately when others complete."""
         job_id = job.job_id
-        max_rounds = 50
-        round_num = 1
+        running_tasks = {}  # task_id -> asyncio.Task
         
-        while round_num <= max_rounds and job.status == "running":
-            ready_tasks = scheduler.get_ready_tasks()
-            
-            if not ready_tasks:
-                progress = scheduler.get_progress()
-                total_completed = progress["completed_tasks"] + progress["failed_tasks"]
+        async def task_completion_handler(task, task_coroutine):
+            """Handle individual task completion and update job status."""
+            try:
+                result = await task_coroutine
                 
-                if total_completed == progress["total_tasks"]:
-                    break
-                else:
-                    logger.warning(f"No ready tasks in round {round_num} for job {job_id}")
-                    break
-            
-            # Execute ready tasks
-            available_slots = scheduler.max_concurrent - len(scheduler.running_tasks)
-            tasks_to_execute = ready_tasks[:available_slots]
-            
-            # Update task status
-            for task in tasks_to_execute:
+                # Update job task status
                 if task.id in job.tasks:
-                    job.tasks[task.id].status = TaskStatus.RUNNING
-                    job.tasks[task.id].start_time = datetime.now()
-            
-            # Send progress update
-            progress = scheduler.get_progress()
-            await self._broadcast_job_message(
-                job_id=job_id,
-                message_type=MessageType.JOB_PROGRESS,
-                content={
-                    "round": round_num,
-                    "executing_tasks": len(tasks_to_execute),
-                    "progress": progress
-                }
-            )
-            
-            # Execute tasks concurrently
-            execution_tasks = []
-            for task in tasks_to_execute:
-                execution_tasks.append(scheduler.execute_task(task))
-            
-            if execution_tasks:
-                results = await asyncio.gather(*execution_tasks, return_exceptions=True)
+                    job_task = job.tasks[task.id]
+                    job_task.end_time = datetime.now()
+                    job_task.status = TaskStatus.COMPLETED
+                    
+                    if hasattr(task, 'result') and task.result:
+                        job_task.content = task.result.content
+                        # Copy metadata from task result
+                        if hasattr(task.result, 'metadata') and task.result.metadata:
+                            job_task.metadata.update(task.result.metadata)
+                            logger.info(f"Updated task {task.id} metadata with keys: {list(task.result.metadata.keys())}")
+                            # Log memory specifically if it exists
+                            if 'memory' in task.result.metadata:
+                                memory_count = len(task.result.metadata['memory']) if isinstance(task.result.metadata['memory'], list) else 0
+                                logger.info(f"Task {task.id} has memory with {memory_count} messages")
+                    else:
+                        logger.warning(f"Task {task.id} completed but has no result or result.content")
                 
-                # Update task status based on results
-                for i, (task, result) in enumerate(zip(tasks_to_execute, results)):
-                    if task.id in job.tasks:
-                        job_task = job.tasks[task.id]
-                        job_task.end_time = datetime.now()
-                        
-                        if isinstance(result, Exception):
-                            job_task.status = TaskStatus.FAILED
-                            job_task.error_message = str(result)
-                        else:
-                            job_task.status = TaskStatus.COMPLETED
-                            if hasattr(task, 'result') and task.result:
-                                job_task.content = task.result.content
-                                # Copy metadata from task result - ensure we get the executor result metadata
-                                if hasattr(task.result, 'metadata') and task.result.metadata:
-                                    # Update with all metadata from the task result
-                                    job_task.metadata.update(task.result.metadata)
-                                    logger.info(f"Updated task {task.id} metadata with keys: {list(task.result.metadata.keys())}")
-                                    # Log memory specifically if it exists
-                                    if 'memory' in task.result.metadata:
-                                        memory_count = len(task.result.metadata['memory']) if isinstance(task.result.metadata['memory'], list) else 0
-                                        logger.info(f"Task {task.id} has memory with {memory_count} messages")
-                            else:
-                                logger.warning(f"Task {task.id} completed but has no result or result.content")
+                logger.info(f"✅ Task {task.id} completed, checking for new tasks to start")
+                
+            except Exception as e:
+                # Handle task failure
+                if task.id in job.tasks:
+                    job_task = job.tasks[task.id]
+                    job_task.end_time = datetime.now()
+                    job_task.status = TaskStatus.FAILED
+                    job_task.error_message = str(e)
+                
+                logger.error(f"❌ Task {task.id} failed: {str(e)}")
             
-            round_num += 1
-            await asyncio.sleep(0.1)  # Small delay between rounds
+            finally:
+                # Remove from running tasks
+                running_tasks.pop(task.id, None)
+        
+        # Main scheduling loop
+        while job.status == "running":
+            # Check if all tasks are completed
+            progress = scheduler.get_progress()
+            total_completed = progress["completed_tasks"] + progress["failed_tasks"]
+            
+            if total_completed == progress["total_tasks"]:
+                break
+            
+            # Get ready tasks that can be started
+            ready_tasks = scheduler.get_ready_tasks()
+            available_slots = scheduler.max_concurrent - len(running_tasks)
+            
+            # Start new tasks if slots are available
+            if ready_tasks and available_slots > 0:
+                tasks_to_start = ready_tasks[:available_slots]
+                
+                for task in tasks_to_start:
+                    # Update task status to running
+                    if task.id in job.tasks:
+                        job.tasks[task.id].status = TaskStatus.RUNNING
+                        job.tasks[task.id].start_time = datetime.now()
+                    
+                    # Start task execution
+                    task_coroutine = scheduler.execute_task(task)
+                    async_task = asyncio.create_task(task_completion_handler(task, task_coroutine))
+                    running_tasks[task.id] = async_task
+                    
+                    logger.info(f"🚀 Started task {task.id} ({task.title})")
+                
+                # Send progress update
+                await self._broadcast_job_message(
+                    job_id=job_id,
+                    message_type=MessageType.JOB_PROGRESS,
+                    content={
+                        "started_tasks": len(tasks_to_start),
+                        "running_tasks": len(running_tasks),
+                        "progress": scheduler.get_progress()
+                    }
+                )
+            
+            # Wait for at least one task to complete, or timeout after 1 second
+            if running_tasks:
+                try:
+                    done, pending = await asyncio.wait(
+                        running_tasks.values(), 
+                        return_when=asyncio.FIRST_COMPLETED,
+                        timeout=1.0
+                    )
+                    
+                    # Process completed tasks (they've already been handled by task_completion_handler)
+                    for completed_task in done:
+                        try:
+                            await completed_task  # This should not block since it's done
+                        except Exception as e:
+                            logger.error(f"Error in task completion handler: {e}")
+                    
+                except asyncio.TimeoutError:
+                    # Timeout is normal, just continue the loop
+                    pass
+            else:
+                # No running tasks, but also no ready tasks - might be waiting for dependencies
+                if not ready_tasks:
+                    await asyncio.sleep(0.1)
+        
+        # Wait for any remaining tasks to complete
+        if running_tasks:
+            logger.info(f"Waiting for {len(running_tasks)} remaining tasks to complete")
+            await asyncio.gather(*running_tasks.values(), return_exceptions=True)
         
         # Mark job as completed
         if job.status == "running":
@@ -527,9 +571,7 @@ class ReportGenerationService:
             
             for task, result in root_tasks:
                 content = result.content.strip()
-                if not content.startswith('#') and task.title:
-                    final_report += f"## {task.title}\n\n{content}\n\n"
-                else:
+                if content:
                     final_report += f"{content}\n\n"
             
             # Save report
@@ -586,6 +628,10 @@ class ReportGenerationService:
                 elif message.message_type == MessageType.TASK_COMPLETE:
                     task.status = TaskStatus.COMPLETED
                     task.progress = 100.0
+                    # Also update metadata from the stream message if available
+                    if message.metadata:
+                        task.metadata.update(message.metadata)
+                        logger.info(f"Updated task {message.task_id} metadata from stream message with keys: {list(message.metadata.keys())}")
                 elif message.message_type == MessageType.TASK_ERROR:
                     task.status = TaskStatus.FAILED
                     if isinstance(message.content, dict):

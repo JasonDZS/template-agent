@@ -41,8 +41,7 @@ from .converters import (
     convert_document_tree_to_json
 )
 
-# Legacy compatibility - re-export main classes for backward compatibility
-from .document_scheduler import MarkdownTaskSchedule as MarkdownTaskSchedule_Legacy
+# Conversion utilities
 from .converters import parse_markdown_file_to_document_tree
 
 __all__ = [
@@ -62,8 +61,5 @@ __all__ = [
     'parse_markdown_to_document_tree', 'parse_markdown_file_to_document_tree',
     'parse_markdown_with_metadata', 'extract_document_info',
     'batch_parse_markdown_files', 'convert_json_to_document_tree',
-    'convert_document_tree_to_json',
-    
-    # Legacy compatibility
-    'MarkdownTaskSchedule_Legacy'
+    'convert_document_tree_to_json'
 ]

@@ -16,6 +16,7 @@ from ..template.task_executors import TaskExecutor, TaskInput, TaskOutput
 from ..template.task_models import Task, TaskType
 from ..agent.section_agent import SectionAgent
 from ..agent.merge_agent import MergeAgent
+from ..schema import AgentState
 from ..logger import logger
 
 from .models import StreamMessage, MessageType, TaskStatus
@@ -63,6 +64,16 @@ class StreamingSectionExecutor(StreamingExecutorBase):
         task = task_input.task
         job_id = task_input.context.get("job_id", "unknown")
         
+        # Check if task was cancelled before execution
+        from ..template.task_models import TaskStatus
+        if task.status == TaskStatus.CANCELLED:
+            logger.info(f"🚫 Task {task.title} execution was cancelled")
+            return TaskOutput(
+                task_id=task.id,
+                content="Task was cancelled",
+                metadata={"status": "cancelled"}
+            )
+        
         # Send task start message
         await self.send_stream_message(
             job_id=job_id,
@@ -100,9 +111,8 @@ class StreamingSectionExecutor(StreamingExecutorBase):
                 content={"progress": 10, "status": "initializing_agent"}
             )
             
-            # Create and configure SectionAgent
+            # Create and configure SectionAgent (remove name parameter to avoid conflict)
             agent = SectionAgent(
-                name=f"section_{task.id}",
                 section_info=section_info,
                 report_context=report_context,
                 output_format=task.section_content,
@@ -143,13 +153,49 @@ class StreamingSectionExecutor(StreamingExecutorBase):
             
             # Run section generation
             logger.info(f"🔧 Starting SectionAgent for: {task.title}")
-            agent_content = content = await agent.run_section_generation()
+            await agent.run()
             
-            if not content:
-                content = f"[Generation failed] {task.title}: No content generated"
+            # Debug agent state
+            logger.info(f"🔍 Agent state after run(): is_finished={agent.is_finished()}, is_completed={getattr(agent, 'is_completed', None)}, state={getattr(agent, 'state', None)}")
             
-            # Format content with proper heading
-            formatted_content = "#" * task.level + " " + task.title + "\n" + content
+            if agent.is_finished():
+                agent_content = content = agent.get_content()
+                if not content:
+                    content = f"[Generation failed] {task.title}: No content generated"
+                    logger.warning(f"⚠️ Agent finished but generated no content")
+                else:
+                    logger.info(f"✅ Agent finished successfully, content length: {len(content)}")
+            elif getattr(agent, 'state', None) == AgentState.IDLE and getattr(agent, 'current_step', 0) == 0:
+                # Agent reached max steps and was reset to IDLE - treat as completed with error
+                agent_content = content = agent.get_content() or f"[Generation timeout] {task.title}: Agent reached maximum steps without completion"
+                logger.warning(f"⚠️ Agent reached max steps without finishing, treating as completed with timeout")
+            else:
+                agent_content = content = f"[Generation incomplete] {task.title}: Agent did not finish successfully"
+                logger.error(f"❌ Agent did not finish successfully. State details:")
+                logger.error(f"   - is_completed: {getattr(agent, 'is_completed', 'N/A')}")
+                logger.error(f"   - state: {getattr(agent, 'state', 'N/A')}")
+                logger.error(f"   - current_step: {getattr(agent, 'current_step', 'N/A')}")
+                logger.error(f"   - max_steps: {getattr(agent, 'max_steps', 'N/A')}")
+                logger.error(f"   - generated_content length: {len(getattr(agent, 'generated_content', ''))}")
+                logger.error(f"   - memory messages count: {len(agent.memory.messages) if hasattr(agent, 'memory') else 'N/A'}")
+                
+                # Log last few memory messages for debugging
+                if hasattr(agent, 'memory') and agent.memory.messages:
+                    logger.error(f"   - Last memory messages:")
+                    for i, msg in enumerate(agent.memory.messages[-3:]):  # Last 3 messages
+                        logger.error(f"     [{i}] {msg.role}: {str(msg.content)[:100]}...")
+            
+            # Format content with proper heading (check if already has heading)
+            if not content.startswith('#'):
+                formatted_content = "#" * task.level + " " + task.title + "\n" + content
+            else:
+                # Ensure proper heading level
+                lines = content.split('\n', 1)
+                if lines[0].startswith('#'):
+                    header = "#" * task.level + " " + task.title
+                    formatted_content = header + ("\n" + lines[1] if len(lines) > 1 else "")
+                else:
+                    formatted_content = content
             
             # Send content streaming message
             await self.send_stream_message(
@@ -170,7 +216,7 @@ class StreamingSectionExecutor(StreamingExecutorBase):
                     "content_length": len(formatted_content),
                     "executor_id": self.executor_id,
                     "agent_content": agent_content,
-                    "memory": agent.messages if hasattr(agent, 'messages') else [],
+                    "memory": agent.memory.messages if hasattr(agent, 'memory') else [],
                     "streaming": True
                 }
             )
@@ -184,7 +230,8 @@ class StreamingSectionExecutor(StreamingExecutorBase):
                     "task_title": task.title,
                     "content_length": len(formatted_content),
                     "status": "completed"
-                }
+                },
+                metadata=task_output.metadata  # Include metadata in the completion message
             )
             
             self.log_task_output(task, task_output)
@@ -241,6 +288,16 @@ class StreamingMergeExecutor(StreamingExecutorBase):
         task = task_input.task
         job_id = task_input.context.get("job_id", "unknown")
         
+        # Check if task was cancelled before execution
+        from ..template.task_models import TaskStatus
+        if task.status == TaskStatus.CANCELLED:
+            logger.info(f"🚫 Task {task.title} execution was cancelled")
+            return TaskOutput(
+                task_id=task.id,
+                content="Task was cancelled",
+                metadata={"status": "cancelled"}
+            )
+        
         # Send task start message
         await self.send_stream_message(
             job_id=job_id,
@@ -270,8 +327,35 @@ class StreamingMergeExecutor(StreamingExecutorBase):
                 "type": task_input.context.get("report_type", "document")
             }
             
-            # Get child contents from dependencies
-            child_contents = list(task_input.dependencies_content.values())
+            # Get child contents from dependencies in the correct order
+            child_contents = []
+            failed_contents = []
+            
+            for dep_id in task.dependencies:
+                if dep_id in task_input.dependencies_content:
+                    content = task_input.dependencies_content[dep_id]
+                    logger.info(f"   📝 Processing dependency {dep_id}, content preview: '{content[:200]}...' (length: {len(content)})")
+                    
+                    # Filter out failed content
+                    is_failed = ("[Generation incomplete]" in content or 
+                                "[Generation failed]" in content or 
+                                "[Generation timeout]" in content or
+                                "[Merge incomplete]" in content or 
+                                "[Merge failed]" in content or
+                                "[Merge timeout]" in content or
+                                "[No content generated]" in content or
+                                "Agent did not finish successfully" in content)
+                    
+                    if is_failed:
+                        failed_contents.append(content)
+                        logger.warning(f"   ⚠️  Skipping failed dependency content for task {dep_id}")
+                    else:
+                        child_contents.append(content)
+                        logger.info(f"   ✅ Valid dependency content for task {dep_id}")
+                else:
+                    logger.warning(f"   ⚠️  Missing dependency content for task {dep_id}")
+            
+            logger.info(f"   📝 Valid child contents: {len(child_contents)}, Failed contents: {len(failed_contents)}")
             
             # Send progress update
             await self.send_stream_message(
@@ -282,10 +366,24 @@ class StreamingMergeExecutor(StreamingExecutorBase):
             )
             
             logger.info(f"🔀 Starting MergeAgent for: {task.title}")
+            logger.info(f"   Expected dependencies: {len(task.dependencies)} {task.dependencies}")
+            logger.info(f"   Available dependencies: {len(task_input.dependencies_content)} {list(task_input.dependencies_content.keys())}")
+            logger.info(f"   Collected child contents: {len(child_contents)}")
+            
+            # Log child content previews for debugging
+            for i, content in enumerate(child_contents):
+                preview = content[:100].replace('\n', '\\n') if content else "[empty]"
+                logger.info(f"   Child content {i+1}: {len(content)} chars - '{preview}{'...' if len(content) > 100 else ''}'")
+                
             logger.info(f"   Merging {len(child_contents)} child contents")
             
             if not child_contents:
-                agent_content = content = f"[Merge Warning] {task.title}: No child contents to merge"
+                if failed_contents:
+                    agent_content = content = f"[Merge Warning] {task.title}: All child contents failed to generate. Unable to merge."
+                    logger.warning(f"⚠️ All {len(failed_contents)} child contents failed for merging {task.title}")
+                else:
+                    agent_content = content = f"[Merge Warning] {task.title}: No child contents to merge"
+                    logger.warning(f"⚠️ No child contents available for merging {task.title}")
                 memory = []
             else:
                 # Send progress update
@@ -296,13 +394,12 @@ class StreamingMergeExecutor(StreamingExecutorBase):
                     content={"progress": 40, "status": "merging_content"}
                 )
                 
-                # Create and run MergeAgent
+                # Create and run MergeAgent (remove unsupported parameters)
                 agent = MergeAgent(
                     section_info=section_info,
                     report_context=report_context,
                     child_contents=child_contents,
-                    knowledge_base_path=self.knowledge_base_path,
-                    enable_model_merge=self.enable_model_merge
+                    output_format=task.section_content if hasattr(task, 'section_content') else None
                 )
                 
                 # Send progress update
@@ -313,14 +410,53 @@ class StreamingMergeExecutor(StreamingExecutorBase):
                     content={"progress": 70, "status": "generating_merged_content"}
                 )
                 
-                agent_content = content = await agent.run_merge()
-                memory = agent.messages if hasattr(agent, 'messages') else []
+                await agent.run()
                 
-                if not content:
-                    content = f"[Merge failed] {task.title}: No content generated"
+                # Debug agent state
+                logger.info(f"🔍 MergeAgent state after run(): is_finished={agent.is_finished()}, is_completed={getattr(agent, 'is_completed', None)}, state={getattr(agent, 'state', None)}")
+                
+                if agent.is_finished():
+                    agent_content = content = agent.get_content()
+                    memory = agent.memory.messages if hasattr(agent, 'memory') else []
+                    
+                    if not content:
+                        content = f"[Merge failed] {task.title}: No content generated"
+                        logger.warning(f"⚠️ MergeAgent finished but generated no content")
+                    else:
+                        logger.info(f"✅ MergeAgent finished successfully, content length: {len(content)}")
+                elif getattr(agent, 'state', None) == AgentState.IDLE and getattr(agent, 'current_step', 0) == 0:
+                    # Agent reached max steps and was reset to IDLE - treat as completed with error
+                    agent_content = content = agent.get_content() or f"[Merge timeout] {task.title}: Agent reached maximum steps without completion"
+                    memory = agent.memory.messages if hasattr(agent, 'memory') else []
+                    logger.warning(f"⚠️ MergeAgent reached max steps without finishing, treating as completed with timeout")
+                else:
+                    agent_content = content = f"[Merge incomplete] {task.title}: Agent did not finish successfully"
+                    memory = []
+                    logger.error(f"❌ MergeAgent did not finish successfully. State details:")
+                    logger.error(f"   - is_completed: {getattr(agent, 'is_completed', 'N/A')}")
+                    logger.error(f"   - state: {getattr(agent, 'state', 'N/A')}")
+                    logger.error(f"   - current_step: {getattr(agent, 'current_step', 'N/A')}")
+                    logger.error(f"   - max_steps: {getattr(agent, 'max_steps', 'N/A')}")
+                    logger.error(f"   - generated_content length: {len(getattr(agent, 'generated_content', ''))}")
+                    logger.error(f"   - memory messages count: {len(agent.memory.messages) if hasattr(agent, 'memory') else 'N/A'}")
+                    
+                    # Log last few memory messages for debugging
+                    if hasattr(agent, 'memory') and agent.memory.messages:
+                        logger.error(f"   - Last memory messages:")
+                        for i, msg in enumerate(agent.memory.messages[-3:]):  # Last 3 messages
+                            logger.error(f"     [{i}] {msg.role}: {str(msg.content)[:100]}...")
             
-            # Format content with proper heading
-            formatted_content = "#" * task.level + " " + task.title + "\n" + content
+            # Format content with proper heading (check if already has heading for merge)
+            if not content.startswith('#'):
+                formatted_content = "#" * task.level + " " + task.title + "\n" + content
+            else:
+                # Ensure proper heading level
+                lines = content.split('\n', 1)
+                if lines[0].startswith('#'):
+                    header = "#" * task.level + " " + task.title
+                    formatted_content = header + ("\n" + lines[1] if len(lines) > 1 else "")
+                else:
+                    formatted_content = content
             
             # Send content streaming message
             await self.send_stream_message(
@@ -361,7 +497,8 @@ class StreamingMergeExecutor(StreamingExecutorBase):
                     "child_count": len(child_contents),
                     "merge_mode": "model" if self.enable_model_merge else "simple",
                     "status": "completed"
-                }
+                },
+                metadata=task_output.metadata  # Include metadata in the completion message
             )
             
             self.log_task_output(task, task_output)

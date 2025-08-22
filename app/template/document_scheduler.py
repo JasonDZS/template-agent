@@ -71,8 +71,10 @@ class MarkdownTaskSchedule:
             heading_node=heading,
             title=heading.content or f"Section {heading.level}",
             level=heading.level,
+            section_content=heading.children_content(),
             priority=100 - heading.level,  # Higher level = higher priority
             estimated_duration=30.0  # Default 30 seconds
+
         )
     
     def _create_merge_task(self, heading: HeadingNode) -> Optional[Task]:

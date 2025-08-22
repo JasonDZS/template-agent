@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Complete workflow example using TaskScheduler and TaskExecutors
+Complete workflow example.txt using TaskScheduler and TaskExecutors
 Supports arbitrary markdown template input with SectionAgent and MergeAgent integration
 """
 
@@ -41,11 +41,12 @@ class SectionAgentExecutor(TaskExecutor):
         self.log_task_input(task_input)
         
         try:
-            # Create section info for SectionAgent
+            # Create section info for SectionAgent following tutorial format
             section_info = {
                 "id": task.id,
                 "content": task.title,
-                "level": task.level
+                "level": task.level,
+                "description": f"Generate content for section: {task.title}"
             }
             
             # Create report context
@@ -53,22 +54,41 @@ class SectionAgentExecutor(TaskExecutor):
                 "title": task_input.context.get("report_title", "Report"),
                 "type": task_input.context.get("report_type", "document")
             }
-            logger.info(f"🔧 Starting SectionAgent for: {task.title}, Task: {task}, ")
-            # Create and run SectionAgent
+            logger.info(f"🔧 Starting SectionAgent for: {task.title}")
+            logger.info(f"   Section ID: {task.id}, Level: {task.level}")
+            logger.info(f"   Knowledge base: {self.knowledge_base_path}")
+            # Create and run SectionAgent with proper parameters
             agent = SectionAgent(
-                name=f"section_{task.id}",
                 section_info=section_info,
                 report_context=report_context,
-                output_format = task.section_content,
+                output_format=task.section_content,
                 knowledge_base_path=self.knowledge_base_path
             )
             
-            agent_content = content = await agent.run_section_generation()
+            await agent.run()
             
-            if not content:
-                content = f"[Generation failed] {task.title}: No content generated"
+            if agent.is_finished():
+                agent_content = content = agent.get_content()
+                if not content:
+                    content = f"[Generation failed] {task.title}: No content generated"
+                    logger.warning(f"⚠️ SectionAgent generated empty content for {task.title}")
+                else:
+                    logger.info(f"✅ SectionAgent completed successfully for {task.title}")
+                    logger.info(f"   Generated content length: {len(content)} characters")
+            else:
+                agent_content = content = f"[Generation incomplete] {task.title}: Agent did not finish successfully"
+                logger.warning(f"⚠️ SectionAgent did not complete for {task.title}")
 
-            content = "#" * task.level + " " + task.title + "\n" + content
+            # Add section header if not already present
+            if not content.startswith('#'):
+                content = "#" * task.level + " " + task.title + "\n" + content
+            else:
+                # Ensure proper heading level
+                lines = content.split('\n', 1)
+                if lines[0].startswith('#'):
+                    # Replace existing heading with proper level
+                    header = "#" * task.level + " " + task.title
+                    content = header + ("\n" + lines[1] if len(lines) > 1 else "")
 
             task_output = TaskOutput(
                 content=content,
@@ -80,7 +100,7 @@ class SectionAgentExecutor(TaskExecutor):
                     "content_length": len(content),
                     "executor_id": self.executor_id,
                     "agent_content": agent_content,
-                    "memory": agent.messages
+                    "memory": agent.memory.messages if hasattr(agent, 'memory') else []
                 }
             )
             
@@ -91,6 +111,7 @@ class SectionAgentExecutor(TaskExecutor):
             
         except Exception as e:
             self.log_task_error(task, e)
+            logger.error(f"❌ SectionAgent execution failed for {task.title}: {str(e)}")
             # Return error content instead of raising exception
             error_content = f"[Generation Error] {task.title}: {str(e)}"
             return TaskOutput(
@@ -98,7 +119,10 @@ class SectionAgentExecutor(TaskExecutor):
                 metadata={
                     "task_type": "generation",
                     "error": str(e),
-                    "executor_id": self.executor_id
+                    "error_type": type(e).__name__,
+                    "executor_id": self.executor_id,
+                    "section_title": task.title,
+                    "section_level": task.level
                 }
             )
 
@@ -106,10 +130,9 @@ class SectionAgentExecutor(TaskExecutor):
 class MergeAgentExecutor(TaskExecutor):
     """Task executor that uses MergeAgent for content merging"""
     
-    def __init__(self, knowledge_base_path: str = "workdir/documents", enable_model_merge: bool = True, **kwargs):
+    def __init__(self, knowledge_base_path: str = "workdir/documents", **kwargs):
         super().__init__(**kwargs)
         self.knowledge_base_path = knowledge_base_path
-        self.enable_model_merge = enable_model_merge
     
     def can_execute(self, task: Task) -> bool:
         """Check if this executor can handle merge tasks"""
@@ -123,11 +146,12 @@ class MergeAgentExecutor(TaskExecutor):
         self.log_task_input(task_input)
         
         try:
-            # Create section info for MergeAgent
+            # Create section info for MergeAgent following tutorial format  
             section_info = {
                 "id": task.id,
                 "content": task.title,
-                "level": task.level
+                "level": task.level,
+                "description": f"Merge content for section: {task.title}"
             }
             
             # Create report context
@@ -140,28 +164,51 @@ class MergeAgentExecutor(TaskExecutor):
             child_contents = list(task_input.dependencies_content.values())
             
             logger.info(f"🔀 Starting MergeAgent for: {task.title}")
+            logger.info(f"   Section ID: {task.id}, Level: {task.level}")
             logger.info(f"   Merging {len(child_contents)} child contents")
+            logger.info(f"   Expected dependencies: {len(task.dependencies)}, Received: {len(task_input.dependencies_content)}")
             
             if not child_contents:
                 agent_content = content = f"[Merge Warning] {task.title}: No child contents to merge"
                 memory = []
+                logger.warning(f"⚠️ No child contents available for merging {task.title}")
             else:
-                # Create and run MergeAgent
+                # Create and run MergeAgent (remove knowledge_base_path as it's not supported)
                 agent = MergeAgent(
                     section_info=section_info,
                     report_context=report_context,
                     child_contents=child_contents,
-                    knowledge_base_path=self.knowledge_base_path,
-                    enable_model_merge=self.enable_model_merge
+                    output_format=task.section_content if hasattr(task, 'section_content') else None
                 )
                 
-                agent_content = content = await agent.run_merge()
-                memory = agent.messages
+                await agent.run()
                 
-                if not content:
-                    content = f"[Merge failed] {task.title}: No content generated"
+                if agent.is_finished():
+                    agent_content = content = agent.get_content()
+                    memory = agent.memory.messages if hasattr(agent, 'memory') else []
+                    
+                    if not content:
+                        content = f"[Merge failed] {task.title}: No content generated"
+                        logger.warning(f"⚠️ MergeAgent generated empty content for {task.title}")
+                    else:
+                        logger.info(f"✅ MergeAgent completed successfully for {task.title}")
+                        logger.info(f"   Merged content length: {len(content)} characters")
+                        logger.info(f"   Successfully merged {len(child_contents)} child contents")
+                else:
+                    agent_content = content = f"[Merge incomplete] {task.title}: Agent did not finish successfully"
+                    memory = []
+                    logger.warning(f"⚠️ MergeAgent did not complete for {task.title}")
 
-            content = "#" * task.level + " " + task.title + "\n" + content
+            # Add section header if not already present (for merge tasks)
+            if not content.startswith('#'):
+                content = "#" * task.level + " " + task.title + "\n" + content
+            else:
+                # Ensure proper heading level
+                lines = content.split('\n', 1)
+                if lines[0].startswith('#'):
+                    # Replace existing heading with proper level
+                    header = "#" * task.level + " " + task.title
+                    content = header + ("\n" + lines[1] if len(lines) > 1 else "")
 
             task_output = TaskOutput(
                 content=content,
@@ -174,7 +221,6 @@ class MergeAgentExecutor(TaskExecutor):
                     "expected_dependencies": len(task.dependencies),
                     "received_dependencies": len(task_input.dependencies_content),
                     "content_length": len(content),
-                    "enable_model_merge": self.enable_model_merge,
                     "executor_id": self.executor_id,
                     "agent_content": agent_content,
                     "memory": memory
@@ -188,6 +234,7 @@ class MergeAgentExecutor(TaskExecutor):
             
         except Exception as e:
             self.log_task_error(task, e)
+            logger.error(f"❌ MergeAgent execution failed for {task.title}: {str(e)}")
             # Return error content instead of raising exception
             error_content = f"[Merge Error] {task.title}: {str(e)}"
             return TaskOutput(
@@ -195,18 +242,23 @@ class MergeAgentExecutor(TaskExecutor):
                 metadata={
                     "task_type": "merge",
                     "error": str(e),
-                    "executor_id": self.executor_id
+                    "error_type": type(e).__name__,
+                    "executor_id": self.executor_id,
+                    "section_title": task.title,
+                    "section_level": task.level,
+                    "child_count": len(child_contents) if 'child_contents' in locals() else 0
                 }
             )
 
 
-async def run_markdown_template_workflow(template_path: str, max_concurrent: int = 3):
+async def run_markdown_template_workflow(template_path: str, max_concurrent: int = 3, knowledge_base_path: str = None):
     """
     Run complete workflow with arbitrary markdown template
     
     Args:
         template_path: Path to markdown template file
         max_concurrent: Maximum concurrent tasks
+        knowledge_base_path: Optional custom knowledge base path
     """
     print("=" * 70)
     print("基于TaskScheduler的完整工作流程示例")
@@ -218,6 +270,16 @@ async def run_markdown_template_workflow(template_path: str, max_concurrent: int
         return
     
     print(f"📄 Loading template: {template_path}")
+    
+    # Auto-detect knowledge base path if not provided
+    if knowledge_base_path is None:
+        knowledge_base_path = "workdir/documents"
+        if Path("workdir/finance/documents").exists():
+            knowledge_base_path = "workdir/finance/documents"
+        elif Path("workdir/documents").exists():
+            knowledge_base_path = "workdir/documents"
+    
+    print(f"📚 Using knowledge base: {knowledge_base_path}")
     
     # Load template and create task schedule
     schedule = MarkdownTaskSchedule(template_path, max_concurrent=max_concurrent)
@@ -237,11 +299,13 @@ async def run_markdown_template_workflow(template_path: str, max_concurrent: int
     # Create task scheduler
     scheduler = TaskScheduler(max_concurrent=max_concurrent)
     
-    # Register executors
-    section_executor = SectionAgentExecutor(knowledge_base_path="workdir/documents/finance")
+    # Register executors with detected knowledge base path
+    section_executor = SectionAgentExecutor(
+        knowledge_base_path=knowledge_base_path,
+        executor_id="section_executor_1"
+    )
     merge_executor = MergeAgentExecutor(
-        knowledge_base_path="workdir/documents/finance",
-        enable_model_merge=False
+        executor_id="merge_executor_1"
     )
     
     scheduler.register_executor(section_executor)
@@ -350,11 +414,28 @@ async def generate_final_report(scheduler: TaskScheduler, template_path: str):
         except (AttributeError, KeyError):
             return 0
     
-    # Collect root tasks (top-level sections that aren't dependencies of others)
+    # Find root tasks (tasks with no dependents) and sort by document order
+    all_dependencies = set()
+    for task in scheduler.tasks.values():
+        all_dependencies.update(task.dependencies)
+    
+    # Collect only root tasks with results
     root_tasks = []
     for task_id, task in scheduler.tasks.items():
-        if task_id not in all_dependencies and task.result and task.result.content:
+        if (task_id not in all_dependencies and 
+            task.result and task.result.content):
             root_tasks.append((task, task.result))
+    
+    print(f"📋 Found {len(root_tasks)} root tasks with content")
+    if len(root_tasks) == 0:
+        print("⚠️  No root tasks with content found!")
+        # Debug: show all task statuses
+        status_summary = {}
+        for task in scheduler.tasks.values():
+            status = str(task.status)
+            status_summary[status] = status_summary.get(status, 0) + 1
+        print(f"📊 Task status summary: {status_summary}")
+        return
     
     # Sort root tasks by level first, then by document order (line number)
     root_tasks.sort(key=lambda x: (x[0].level, extract_line_number(x[0])))
@@ -365,11 +446,9 @@ async def generate_final_report(scheduler: TaskScheduler, template_path: str):
 
     # Add content with proper structure
     for task, result in root_tasks:
-        # Ensure content includes the section title if not already present
+        # The content from executors already includes proper headings, just add it directly
         content = result.content.strip()
-        if not content.startswith('#') and task.title:
-            final_report += f"## {task.title}\n\n{content}\n\n"
-        else:
+        if content:
             final_report += f"{content}\n\n"
     
     # Save report
@@ -399,7 +478,11 @@ async def main():
     template1 = "workdir/template/企业信贷评估模板.md"
     if Path(template1).exists():
         print(f"\n🎯 示例1: 企业信贷评估模板")
-        await run_markdown_template_workflow(template1, max_concurrent=1)
+        await run_markdown_template_workflow(
+            template1, 
+            max_concurrent=1,
+            knowledge_base_path="workdir/finance/documents"
+        )
 
 if __name__ == "__main__":
     asyncio.run(main())

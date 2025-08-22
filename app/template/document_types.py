@@ -14,7 +14,7 @@ import uuid
 
 
 class NodeType(str, Enum):
-    """Document node types."""
+    """Document node types matching converter.py structure."""
     ROOT = "root"
     HEADING = "heading"
     PARAGRAPH = "paragraph"
@@ -23,8 +23,12 @@ class NodeType(str, Enum):
     CODE_BLOCK = "code_block"
     BLOCKQUOTE = "blockquote"
     TABLE = "table"
+    TABLE_ROW = "table_row"
+    TABLE_CELL = "table_cell"
     IMAGE = "image"
     LINK = "link"
+    HORIZONTAL_RULE = "horizontal_rule"
+    LINE_BREAK = "line_break"
     TEXT = "text"
 
 
@@ -153,16 +157,20 @@ class MarkdownNode(BaseModel):
     def children_content(self) -> str:
         """Get all children content converted to markdown format.
         
-        This method reconstructs the original markdown content from all
-        children nodes, maintaining the original structure and formatting.
+        This method returns the stored raw markdown content from attributes.
+        The latest converter format always stores children_content as a string.
         
         Returns:
             Markdown string of all children content
         """
-        if not self.children:
-            return ""
+        # Get stored raw markdown content (latest format)
+        if self.attributes and "children_content" in self.attributes:
+            stored_content = self.attributes["children_content"]
+            if isinstance(stored_content, str):
+                return stored_content
         
-        return _nodes_to_markdown(self.children)
+        # No stored content available
+        return ""
     
     def get_section_markdown(self) -> str:
         """Get the complete section content as markdown including the heading.
@@ -297,20 +305,7 @@ class HeadingNode(MarkdownNode):
         if not children_md:
             return ""
         
-        # Clean up formatting issues for better agent processing
-        content = children_md
-        
-        # Fix common table formatting issues
-        if '|' in content:
-            # Ensure tables have proper spacing
-            content = content.replace(' | ', ' | ')
-            # Try to ensure table rows are on separate lines
-            content = content.replace(' | |', ' |\n|')
-        
-        # Ensure proper paragraph separation
-        content = content.replace('\n\n\n', '\n\n')
-        
-        return content.strip()
+        return children_md.strip()
 
 
 class ParagraphNode(MarkdownNode):
@@ -374,7 +369,7 @@ class MarkdownDocument(BaseModel):
     """
     title: Optional[str] = Field(None, description="Document title")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Document metadata")
-    root: MarkdownNode = Field(default_factory=lambda: MarkdownNode(type=NodeType.ROOT), description="Root node")
+    root: MarkdownNode = Field(default_factory=lambda: MarkdownNode(type=NodeType.ROOT, content="", parent_id=None, depth=0, order=0), description="Root node")
     node_index: Dict[str, MarkdownNode] = Field(default_factory=dict, description="Node index by ID")
     
     class Config:
@@ -579,6 +574,7 @@ class MarkdownDocument(BaseModel):
         elif node_type == NodeType.PARAGRAPH:
             node = ParagraphNode(
                 id=data["id"],
+                type=NodeType.PARAGRAPH,
                 content=data.get("content"),
                 attributes=data.get("attributes", {}),
                 parent_id=data.get("parent_id"),
@@ -634,10 +630,85 @@ class MarkdownDocument(BaseModel):
 
 
 def _nodes_to_markdown(nodes: List[MarkdownNode]) -> str:
-    """Convert a list of nodes to markdown format.
+    """Convert a list of nodes to markdown format using converter rendering logic.
     
-    This is a helper function that handles the conversion of various node types
-    back to their original markdown representation.
+    This function uses the latest converter format for consistent output.
+    
+    Args:
+        nodes: List of nodes to convert
+        
+    Returns:
+        Markdown string representation
+    """
+    try:
+        # Use converter to render to markdown using latest format
+        from ..converter import json_to_markdown
+        
+        # Convert nodes to the format expected by converter
+        elements = []
+        for node in nodes:
+            element = _node_to_element(node)
+            elements.append(element)
+        
+        # Create a temporary document structure
+        document_data = {
+            "title": "",
+            "metadata": {},
+            "content": elements
+        }
+        
+        result = json_to_markdown(document_data)
+        return result
+        
+    except ImportError:
+        # Fallback to simplified rendering if converter is not available
+        return _nodes_to_markdown_fallback(nodes)
+
+
+def _node_to_element(node: MarkdownNode) -> Dict[str, Any]:
+    """Convert a MarkdownNode to element format for converter using latest format.
+    
+    Args:
+        node: Node to convert
+        
+    Returns:
+        Element dictionary compatible with latest converter
+    """
+    # Map node types to element types
+    type_map = {
+        NodeType.HEADING: "heading",
+        NodeType.PARAGRAPH: "paragraph", 
+        NodeType.LIST: "list",
+        NodeType.LIST_ITEM: "list_item",
+        NodeType.CODE_BLOCK: "code_block",
+        NodeType.BLOCKQUOTE: "blockquote",
+        NodeType.TABLE: "table",
+        NodeType.TABLE_ROW: "table_row",
+        NodeType.TABLE_CELL: "table_cell",
+        NodeType.IMAGE: "image",
+        NodeType.LINK: "link",
+        NodeType.HORIZONTAL_RULE: "horizontal_rule",
+        NodeType.LINE_BREAK: "line_break",
+        NodeType.TEXT: "text"
+    }
+    
+    element = {
+        "type": type_map.get(node.type, "text"),
+        "content": node.content or "",
+        "attributes": dict(node.attributes) if node.attributes else {}
+    }
+    
+    # Add children_json if present (latest format)
+    if node.children:
+        element["attributes"]["children_json"] = [
+            _node_to_element(child) for child in node.children
+        ]
+    
+    return element
+
+
+def _nodes_to_markdown_fallback(nodes: List[MarkdownNode]) -> str:
+    """Fallback markdown rendering when converter is not available.
     
     Args:
         nodes: List of nodes to convert
@@ -649,53 +720,25 @@ def _nodes_to_markdown(nodes: List[MarkdownNode]) -> str:
     
     for node in nodes:
         if node.type == NodeType.HEADING:
-            # Handle heading nodes
             level = getattr(node, 'level', 1)
             level_prefix = "#" * level
             heading_line = f"{level_prefix} {node.content or ''}"
             markdown_parts.append(heading_line)
             
-            # Add children content recursively
             if node.children:
-                children_md = _nodes_to_markdown(node.children)
+                children_md = _nodes_to_markdown_fallback(node.children)
                 if children_md:
                     markdown_parts.append(children_md)
                     
         elif node.type == NodeType.PARAGRAPH:
-            # Handle paragraph nodes
             if node.content:
-                # Check if this might be a table (contains multiple | characters)
-                content = node.content
-                if '|' in content and content.count('|') > 6:  # Likely a table
-                    # Simple approach: ensure proper spacing around pipes
-                    content = content.replace('|', ' | ').replace('  |  ', ' | ')
-                    # Add line breaks for better readability if it's a long single line
-                    if len(content) > 200 and '\n' not in content:
-                        # Try to detect table row boundaries (this is a simple heuristic)
-                        parts = content.split(' | ')
-                        if len(parts) > 8:  # Likely multiple rows concatenated
-                            rows = []
-                            current_row = []
-                            for i, part in enumerate(parts):
-                                current_row.append(part)
-                                # Every 4th element likely ends a row (based on template structure)
-                                if (i + 1) % 4 == 0:
-                                    rows.append(' | '.join(current_row))
-                                    current_row = []
-                            if current_row:
-                                rows.append(' | '.join(current_row))
-                            content = '\n'.join(rows)
-                
-                markdown_parts.append(content)
-            
-            # Add children content if any (for nested structures)
+                markdown_parts.append(node.content)
             if node.children:
-                children_md = _nodes_to_markdown(node.children)
+                children_md = _nodes_to_markdown_fallback(node.children)
                 if children_md:
                     markdown_parts.append(children_md)
                     
         elif node.type == NodeType.LIST:
-            # Handle list nodes
             list_items = []
             ordered = getattr(node, 'ordered', False)
             start_num = getattr(node, 'start', 1) if ordered else None
@@ -708,11 +751,9 @@ def _nodes_to_markdown(nodes: List[MarkdownNode]) -> str:
                         item_prefix = "- "
                     
                     item_content = child.content or ""
-                    # Handle nested content in list items
                     if child.children:
-                        nested_content = _nodes_to_markdown(child.children)
+                        nested_content = _nodes_to_markdown_fallback(child.children)
                         if nested_content:
-                            # Indent nested content
                             indented_nested = "\n".join(["  " + line for line in nested_content.split("\n")])
                             item_content = f"{item_content}\n{indented_nested}" if item_content else indented_nested
                     
@@ -722,48 +763,20 @@ def _nodes_to_markdown(nodes: List[MarkdownNode]) -> str:
                 markdown_parts.append("\n".join(list_items))
                 
         elif node.type == NodeType.CODE_BLOCK:
-            # Handle code block nodes
             language = getattr(node, 'language', '') or node.attributes.get('language', '') if node.attributes else ''
             content = node.content or ""
-            
             code_block = f"```{language}\n{content}\n```"
             markdown_parts.append(code_block)
             
-        elif node.type == NodeType.BLOCKQUOTE:
-            # Handle blockquote nodes
-            if node.content:
-                # Prefix each line with "> "
-                quoted_lines = [f"> {line}" for line in node.content.split("\n")]
-                markdown_parts.append("\n".join(quoted_lines))
-            
-            # Handle nested content in blockquotes
-            if node.children:
-                children_md = _nodes_to_markdown(node.children)
-                if children_md:
-                    # Prefix children content with "> "
-                    quoted_children = [f"> {line}" for line in children_md.split("\n")]
-                    markdown_parts.append("\n".join(quoted_children))
-                    
         elif node.type == NodeType.TABLE:
-            # Handle table nodes - preserve original table formatting
-            if node.content:
-                # Ensure proper line breaks are preserved in table content
-                table_content = node.content.replace('|', ' |').replace(' |', ' |\n').replace('|\n |', '|\n|')
-                markdown_parts.append(table_content)
-            
-        elif node.type in [NodeType.LINK, NodeType.IMAGE]:
-            # Handle links and images
             if node.content:
                 markdown_parts.append(node.content)
                 
         else:
-            # Handle other node types (text, etc.)
             if node.content:
                 markdown_parts.append(node.content)
-            
-            # Add children content for any other nested structures
             if node.children:
-                children_md = _nodes_to_markdown(node.children)
+                children_md = _nodes_to_markdown_fallback(node.children)
                 if children_md:
                     markdown_parts.append(children_md)
     

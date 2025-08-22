@@ -13,7 +13,6 @@ from app.config import settings
 from app.tool.knowledge_retrieval import get_knowledge_retrieval_tool
 from app.schema import AgentState
 from app.logger import logger
-from app.converter import children_content_to_markdown
 from app.prompt.section_agent import TaskPrompts
 
 
@@ -54,7 +53,15 @@ class SectionAgent(BaseAgent):
                 Defaults to None.
             **kwargs: Additional keyword arguments passed to the parent class.
         """
-        super().__init__(**kwargs)
+        # Extract required fields from section_info
+        section_title = section_info.get('content', 'Untitled Section')
+        section_id = section_info.get('id', 0)
+        
+        # Set basic information for BaseAgent
+        name = f'section_{section_id}_{section_title[:10]}'
+        description = f'Dedicated agent for generating section: {section_title}'
+        
+        super().__init__(name=name, description=description, **kwargs)
         
         self.section_info = section_info
         self.report_context = report_context
@@ -74,22 +81,13 @@ class SectionAgent(BaseAgent):
         
         if not self.description:
             self.description = f"Dedicated agent for generating section '{section_title}'"
-        
-        # Process output format: convert children_content to markdown if provided
-        processed_output_format = ""
-        if output_format:
-            # If output_format is a list (children_content), convert to markdown
-            if isinstance(output_format, list):
-                processed_output_format = children_content_to_markdown(output_format)
-            else:
-                processed_output_format = str(output_format)
-        
+
         # Set up generation prompt
         self.system_prompt = TaskPrompts.GENERATION_PROMPT.format(
             section_title=section_title,
             report_title=report_title,
             section_level=section_level,
-            output_format=processed_output_format
+            output_format=output_format
         )
         self.update_memory("system", self.system_prompt)
     
@@ -116,7 +114,7 @@ class SectionAgent(BaseAgent):
             report_title = self.report_context.get("title", "")
             query = f"{section_title} {report_title}"
             
-            logger.info(f"Starting section generation: {section_title}")
+            logger.info(f"Starting section generation: {section_title}, Model: {self.llm.model}")
             
             # Retrieve relevant information from knowledge base
             try:
@@ -140,25 +138,37 @@ class SectionAgent(BaseAgent):
 {knowledge_context}
 
 Please generate content for this section based on the above knowledge and your system instructions."""
-            
+            if self.llm.model in ["Qwen/Qwen3-4B", "Qwen/Qwen3-32B"]:
+                logger.info(f"Using Qwen model, disabling think tag in prompt")
+                knowledge_prompt = knowledge_prompt + "\no_think<think>\n\n</think>" # disable think tag for Qwen models
             self.update_memory("user", knowledge_prompt)
             
             # Call LLM to generate content
             response = await self.llm.ask(self.memory.messages)
             
-            if response and response.strip():
+            if response:
+                if "</think>" in response:
+                    response = response.split("</think>")[1].strip()
                 self.generated_content = response.strip()
                 self.is_completed = True
+                self.state = AgentState.FINISHED
                 self.update_memory("assistant", self.generated_content)
                 
                 logger.info(f"Section '{section_title}' content generation completed, length: {len(self.generated_content)}")
+                logger.info("=== Generated Content ===")
+                logger.info(self.generated_content)
+                logger.info("=========================")
                 return f"Section '{section_title}' generation completed"
             else:
                 logger.warning(f"LLM returned no valid content for section: {section_title}")
-                return f"Generating content for section '{section_title}'..."
+                self.generated_content = f"[No content generated] LLM returned empty response for section: {section_title}"
+                self.is_completed = True
+                self.state = AgentState.FINISHED
+                return f"Section '{section_title}' completed with no content from LLM"
                 
         except Exception as e:
             logger.error(f"Section generation step execution failed: {e}")
+            self.state = AgentState.ERROR
             return f"Section generation failed: {str(e)}"
     
     def get_content(self) -> str:
@@ -179,29 +189,3 @@ Please generate content for this section based on the above knowledge and your s
         """
         return self.is_completed and self.state == AgentState.FINISHED
     
-    async def run_section_generation(self) -> str:
-        """
-        Run the section generation task.
-        
-        This method orchestrates the complete section generation process by
-        running the agent until completion and returning the generated content.
-        
-        Returns:
-            str: The generated section content.
-            
-        Raises:
-            Exception: If section generation fails.
-        """
-        try:
-            # Run agent until completion
-            while not self.is_finished():
-                result = await self.step()
-                if self.state == AgentState.ERROR:
-                    break
-            
-            return self.generated_content
-            
-        except Exception as e:
-            logger.error(f"Section generation execution failed: {e}")
-            self.state = AgentState.ERROR
-            raise

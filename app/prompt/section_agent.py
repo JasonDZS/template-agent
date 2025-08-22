@@ -76,16 +76,13 @@ Task Description:
 - Section Level: {section_level}
 - Expected Output Format:
 
----
 {output_format}
----
 
 Generation Requirements:
 1. Content must be complete, accurate, and professional
 2. Strictly organize content according to the expected output format
 3. If data support is needed, use the knowledge retrieval tool to find relevant information
 4. Ensure content is logically clear and well-structured
-5. After completing content generation, use the terminate tool to end the task
 
 Please start generating content.
 """
@@ -98,13 +95,15 @@ Task Description:
 - Report Title: {report_title}
 - Section Level: {section_level}
 - Number of Sub-contents: {child_count}
+- Expected Output Format:
+
+{output_format}
 
 Merging Requirements:
 1. Maintain the logical order and structure of sub-contents
 2. Add appropriate section introduction and summary
 3. Ensure coherence and consistency between contents
 4. Remove duplicate information and keep it concise
-5. After completing the merge, use the terminate tool to end the task
 
 Waiting to receive sub-contents for merging...
 """
